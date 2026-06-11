@@ -310,57 +310,63 @@ Parameters: **115200 baud**, 8N1. Both boards are 3.3V → direct TX↔RX connec
 
 ## 9. Phased implementation plan
 
-Ordered to isolate risk — don't skip phases, each validates the assumptions of the next.
+Order chosen for this build: **design the schematic first, then de-risk the camera early with a standalone QR test, then build the machine.** Tackling the riskiest unknown (QR reading) before investing in mechanics means you find out early whether the ESP32-CAM is good enough or whether you need a fallback reader (§2.3).
 
-**Phase 0 — Prep & decisions (1–2 days)**
-- Confirm each actuator's screw lead (→ steps/mm).
-- Decide A4988 vs DRV8825 (§2.1) and the CAM power scheme (§2.2).
-- Order the missing parts from §3 (heatsinks, capacitors, 5V buck, drag chain).
+**Phase 0 — EasyEDA schematic (design first)**
+- Draw the full schematic per pin map §4: the 3 A4988s, 12V distribution + fuse, the two bucks, ESP32-CAM, the brain, the 3 endstops, SG90, and the protection capacitors (100µF on each VMOT, 470µF on the CAM).
+- Mark the common-ground net explicitly and the CAM TX = GPIO13 choice.
+- This freezes the pin assignments that both firmwares depend on.
 
-**Phase 1 — Mechanics**
+**Phase 1 — ESP32-CAM vision proof of concept (bench, no machine)**
+- Power just the ESP32-CAM (via the HW-381 / ESP32-CAM-MB or your 5V buck). Flash `ESP32QRCodeReader`.
+- Recognize a printed QR at a fixed distance; print the decoded string + the QR corner coordinates on the serial monitor.
+- Send a **test "order"** over UART in the §8 format (`QR:CJ0012\n`) to a second board/USB-serial — just to prove the pipeline "see QR → emit order string" works.
+- Tune illumination + resolution until read rate ≥90%. **Decision gate:** if you can't get there, switch to the Tiny Code Reader / GM65 (§2.3) now, before building anything.
+
+**Phase 2 — Bench prep**
+- Confirm each actuator's screw lead (→ steps/mm, §5.2). Confirm each A4988's Rsense.
+- Flash a blink sketch to BOTH ESP32 boards to confirm they program and run.
+
+**Phase 3 — Mechanics**
 - Mount the 3 actuators orthogonally (Y base → X bridge → Z vertical).
 - Mount the gripper (GrabCAD) + SG90 + ESP32-CAM holder on the Z carriage.
 - Install the endstops (one at the "home" end of each axis).
 - Route the cabling through the drag chain to the moving carriage.
 
-**Phase 2 — Electronics on the bench (one axis)**
-- Power ONLY one A4988 + one motor. **Tune Vref** (below). Verify the coil pairing.
-- Test a single stepper from the brain (forward/backward rotation).
-- A4988 Vref tuning: `Vref ≈ I_trip × 8 × Rsense`. For modules with Rsense=0.1Ω and a 1.0–1.2A target → `Vref ≈ 0.8–0.96 V`. Measure Vref between the potentiometer and GND, motor disconnected for the initial setting. **Confirm your board's actual Rsense** (could be 0.05/0.1/0.2Ω) — change the formula accordingly.
+**Phase 4 — Power + one-axis electronics**
+- Wire 12V through a fuse; set both bucks (verify outputs before connecting boards); tie all grounds.
+- Power ONE A4988 + one motor. **Tune Vref** with the motor disconnected. Verify coil pairing with an ohmmeter.
+- A4988 Vref tuning: `Vref ≈ I_trip × 8 × Rsense`. For Rsense=0.1Ω and a 1.0–1.2A target → `Vref ≈ 0.8–0.96 V`. **Confirm your board's actual Rsense** (0.05/0.1/0.2Ω) and adjust the formula. Repeat for all 3 drivers.
 
-**Phase 3 — Brain firmware: one axis + homing**
+**Phase 5 — Brain firmware: motion + homing**
 - Integrate FastAccelStepper. Absolute moves in steps.
-- Implement homing on one axis (approach/back-off/slow re-approach).
-- Calibrate `steps_per_mm` empirically (command 100 mm, measure).
+- Homing on one axis (approach → back-off → slow re-approach), debounce + NC fail-safe. Calibrate `steps_per_mm` (command 100 mm, measure).
+- Extend to all 3 axes; full homing order Z→X→Y; add soft limits.
 
-**Phase 4 — 3 axes + gripper + coordinates**
-- Extend to X, Y, Z. Full homing (order Z→X→Y).
-- Add SG90 on LEDC; test open/close.
-- Define `PICK_POS`, `SCAN_POS` and the `SHELF[3][3]` grid by manual jogging + reading the position (calibration §10).
-- Soft limits + raise Z before XY moves.
+**Phase 6 — Gripper + taught positions**
+- Drive SG90 on LEDC; find open/close pulse widths.
+- Rule: always raise Z fully before any XY move.
+- Jog and record `PICK_POS`, the scan/grab height, and the `SHELF[3][3]` grid. Dry-run a pick→place with a hard-coded target (no vision yet).
 
-**Phase 5 — Standalone ESP32-CAM vision**
-- Flash `ESP32QRCodeReader`. Test decoding a printed QR at the fixed scan distance. Adjust illumination/resolution until the rate is stable.
-- Print the string on the serial monitor; confirm correct `MS/BV/CJ` reads.
+**Phase 7 — Camera mounting + offset calibration**
+- With the CAM now on the machine at its fixed height, calibrate `mm_per_px` and the hand-eye offset `cam_offset_x/y` (§6.4), so the Phase 1 vision now outputs usable millimeters.
 
-**Phase 6 — Serial link CAM↔brain**
-- Implement the §8 protocol (start free-running, then trigger).
-- Confirm on the brain that it receives complete `QR:...`, no corrupt lines, with common GND.
+**Phase 8 — Serial link CAM ↔ brain (full protocol)**
+- Wire CAM TX (13) → brain Serial2 RX (16), common GND. Optional trigger brain→CAM.
+- Implement §8 fully: brain sends `SCAN`, CAM replies `QR:…;DX:…;DY:…;TH:…` or `NOQR`. Confirm clean, uncorrupted lines.
 
-**Phase 7 — Integration: full state machine**
-- Wire the whole §7 flow: pick → scan → decide → place → repeat.
-- Test with 2–3 boxes and different codes. Verify column sorting.
-- Add error handling: scan timeout, reject bin, invalid QR.
+**Phase 9 — Integration: full state machine**
+- Wire the §7 flow: HOME → PICK_POS → SCAN → CORRECT → grab → DECIDE_TARGET → PLACE → repeat.
+- Test vision correction (misplace a box 3–5 mm). Test sorting with MS/BV/CJ. Add error handling (timeout → reject bin, invalid QR ignored).
 
-**Phase 8 — Fine calibration & robustness**
-- Tune the shelf coordinates until placement is repeatable (§10).
-- Tune speeds/accelerations for fast cycles without lost steps.
-- Endurance test: 50–100 continuous cycles, measure drift.
+**Phase 10 — Fine calibration & robustness**
+- Tune the 9 shelf coordinates until placement is repeatable (§10).
+- Raise speeds/accelerations, then back off 20%. Endurance test: 50–100 cycles, measure drift.
 
-**Phase 9 — Finishing**
+**Phase 11 — Finishing**
 - Electronics enclosure, cable fixing, fuse on the 12V.
-- Emergency stop button (cuts the drivers' EN + the motor power).
-- (Optional) small improvements: status LEDs, serial/SD logging.
+- Emergency stop (cuts driver EN + motor power).
+- (Optional) status LEDs, serial/SD logging.
 
 ---
 
@@ -402,73 +408,83 @@ Recommended to do the EasyEDA schematic + the brain code in parallel, since the 
 
 ## Appendix A — Full step-by-step build sequence (start → finished product)
 
-This is the granular, do-this-then-that checklist. Each step is small and verifiable; don't move on until the "✔ verify" passes. Phases map to §9.
+This is the granular, do-this-then-that checklist, in the chosen order (schematic → camera test → build). Each step is small and verifiable; don't move on until the "✔ verify" passes. Stages map to §9.
 
-### Stage 0 — Bench prep
-1. Identify each actuator's screw lead (count turns vs. travel, or read the spec). Write down the lead in mm. ✔ verify: you have a number per axis.
-2. Compute `steps_per_mm` per axis with §5.2 (this is your first estimate; you'll refine it later).
-3. Confirm each A4988's sense resistor value (read `R100`/`R050`/`R200` printed on the SMD resistor near the chip). ✔ verify: you know Rsense.
-4. Lay out all parts; flash a "blink" sketch to BOTH ESP32 boards to confirm they program and run. ✔ verify: onboard LED blinks on each.
+### Stage 0 — EasyEDA schematic (design first)
+1. Create the EasyEDA project; place the brain (WROOM-32D), ESP32-CAM, 3× A4988, 2 bucks, 12V input + fuse, 3 endstops, SG90. 
+2. Wire per pin map §4.2/§4.3; add the protection caps (100µF per VMOT, 470µF on CAM). ✔ verify: every pin in §4 has a net, no pin double-assigned.
+3. Draw the **common-ground** net across PSU, both bucks, both ESP32s; set CAM TX = GPIO13. ✔ verify: one GND net, CAM not using GPIO12 for TX.
+4. Run the EasyEDA DRC (design rule check). ✔ verify: no unconnected/conflicting nets. Export the schematic PDF.
 
-### Stage 1 — Mechanics
-5. Mount the base actuator (Y) to the frame, dead flat. ✔ verify: it doesn't rock.
-6. Mount the X actuator perpendicular on the Y carriage (the bridge). Check squareness with a set square. ✔ verify: X ⟂ Y.
-7. Mount the Z actuator vertically on the X carriage. ✔ verify: Z ⟂ table.
-8. Print/assemble the GrabCAD parallel gripper; mount it + the SG90 on the Z carriage.
-9. Mount the ESP32-CAM holder so the camera looks down at the grab point, at a fixed height. Note that height — it's your scan distance.
-10. Install the 3 endstops, one at the home end of each axis. Position so the carriage trips them before hitting the hard stop. ✔ verify: each switch clicks when the axis reaches home.
-11. Route all moving wires through the drag chain to the Z carriage. Leave service loops. ✔ verify: full travel on all axes without a wire pulling or snagging.
+### Stage 1 — ESP32-CAM vision proof of concept (bench, no machine)
+5. Power only the ESP32-CAM (HW-381 board or 5V buck + 470µF). Flash `ESP32QRCodeReader`. ✔ verify: board boots without brownout loop.
+6. Point it at a printed QR at your intended scan distance; print decoded string + QR corner coordinates on serial. ✔ verify: reads `MS/BV/CJ…` correctly.
+7. Emit a **test order string** in §8 format (`QR:CJ0012\n`) out of a UART pin to a USB-serial/second board. ✔ verify: the "see QR → send order" pipeline works end to end.
+8. Tune illumination (small diffuse side LED) + resolution (QVGA/VGA) for ≥90% read rate over 20 tries, varied lighting. ✔ **Decision gate:** if you can't hit ~90%, switch to Tiny Code Reader / GM65 now (§2.3).
 
-### Stage 2 — Power & one-axis electronics (bench, motors OFF the machine first if you can)
-12. Wire the 12V PSU through a fuse (5A) to a terminal block. ✔ verify: 12.0–12.6V at the block, correct polarity.
-13. Wire the 12V→3.3V buck (brain) and the 12V→5V buck (CAM); set/confirm their outputs with a meter BEFORE connecting any board. ✔ verify: 3.3V and 5V exactly.
-14. **Tie all grounds together** (PSU, both bucks, both ESP32s). ✔ verify: continuity between every GND.
-15. Wire ONE A4988: VMOT+100µF cap to 12V, VDD to 3.3V, RESET–SLEEP tied, STEP/DIR/EN to the brain pins (§4.2), MS jumpers for 1/16.
-16. With the motor DISCONNECTED, power up and set Vref with a screwdriver per §9 Phase 2 (target ~1.0–1.1A). ✔ verify: Vref reads your target ±0.02V.
-17. Power down, connect the motor coils (verify pairs with an ohmmeter — a pair reads a few ohms, across pairs reads open). ✔ verify: correct pairing.
-18. Run a tiny brain sketch that steps the motor 1 rev each direction. ✔ verify: smooth rotation both ways, driver only warm (not hot).
-19. Repeat steps 15–18 for the other two A4988/motor pairs. ✔ verify: all 3 axes spin under command.
+### Stage 2 — Bench prep
+9. Identify each actuator's screw lead (turns vs. travel, or spec); write the lead in mm. ✔ verify: a number per axis.
+10. Compute `steps_per_mm` per axis with §5.2 (first estimate; refined later).
+11. Confirm each A4988's sense resistor (read `R100`/`R050`/`R200`). ✔ verify: you know Rsense.
+12. Flash a blink sketch to BOTH ESP32 boards. ✔ verify: onboard LED blinks on each.
 
-### Stage 3 — Brain firmware: motion + homing
-20. Integrate **FastAccelStepper**; set per-axis max speed + acceleration conservatively. ✔ verify: each axis does a clean 50 mm move.
-21. Implement homing for ONE axis: fast approach → stop on trigger → back off 3 mm → slow re-approach → set zero. ✔ verify: repeatable home, no crash into the hard stop.
-22. Add debounce (5–10 ms) and the NC fail-safe reading on the endstop. ✔ verify: unplugging the endstop reads as "triggered."
-23. Calibrate `steps_per_mm` for that axis: command 100 mm, measure with calipers, correct the constant, repeat until <0.2 mm error. ✔ verify: 100 mm commanded = 100 mm measured.
-24. Extend homing + calibration to all 3 axes. Set the homing order **Z → X → Y**. ✔ verify: full home sequence with no collision.
-25. Add **soft limits** (mm) per axis. ✔ verify: a move past the limit is refused, not executed.
+### Stage 3 — Mechanics
+13. Mount the base actuator (Y) to the frame, dead flat. ✔ verify: it doesn't rock.
+14. Mount the X actuator perpendicular on the Y carriage (the bridge). ✔ verify: X ⟂ Y.
+15. Mount the Z actuator vertically on the X carriage. ✔ verify: Z ⟂ table.
+16. Print/assemble the GrabCAD parallel gripper; mount it + the SG90 on the Z carriage.
+17. Mount the ESP32-CAM holder looking down at the grab point, at a fixed height. Note that height — it's your scan distance.
+18. Install the 3 endstops, one at the home end of each axis, tripping before the hard stop. ✔ verify: each switch clicks at home.
+19. Route all moving wires through the drag chain; leave service loops. ✔ verify: full travel, no wire pull/snag.
 
-### Stage 4 — Gripper + taught positions
-26. Drive the SG90 on LEDC (50 Hz). Find the open and closed pulse widths for your gripper. ✔ verify: clean open/close, no buzzing at rest (detach signal or trim endpoints if it buzzes).
-27. Add a rule: **always raise Z fully before any XY move.** ✔ verify: every XY move starts from Z-up.
-28. Jog manually and record absolute step positions for: `PICK_POS`, the camera `SCAN`/grab height, and the 9 `SHELF[3][3]` cells. Save them in the firmware. ✔ verify: GOTO each saved position lands correctly.
-29. Dry-run a full pick→place with NO vision yet (hard-coded target). ✔ verify: it grabs from PICK_POS and places in a chosen cell repeatably.
+### Stage 4 — Power & one-axis electronics
+20. Wire the 12V PSU through a fuse (5A) to a terminal block. ✔ verify: 12.0–12.6V, correct polarity.
+21. Set/confirm both bucks (3.3V brain, 5V CAM) with a meter BEFORE connecting boards. ✔ verify: 3.3V and 5V exactly.
+22. **Tie all grounds together.** ✔ verify: continuity between every GND.
+23. Wire ONE A4988: VMOT+100µF to 12V, VDD to 3.3V, RESET–SLEEP tied, STEP/DIR/EN to brain pins (§4.2), MS jumpers for 1/16.
+24. With the motor DISCONNECTED, set Vref (target ~1.0–1.1A). ✔ verify: Vref ±0.02V of target.
+25. Power down, connect motor coils (verify pairs with an ohmmeter). ✔ verify: correct pairing.
+26. Step the motor 1 rev each direction from the brain. ✔ verify: smooth both ways, driver only warm.
+27. Repeat 23–26 for the other two drivers. ✔ verify: all 3 axes spin under command.
 
-### Stage 5 — ESP32-CAM vision (standalone)
-30. Flash `ESP32QRCodeReader`. Print decoded strings + the QR corner coordinates to its serial monitor. ✔ verify: it reads `MS/BV/CJ…` codes at your fixed scan height ≥90% of the time.
-31. Tune illumination (add a small diffuse side LED) and resolution (QVGA/VGA) until the read rate is stable. ✔ verify: ≥90% over 20 tries, varied lighting.
-32. Calibrate `mm_per_px`: place a known-size object, read its pixel span, compute mm/px (§6.4). ✔ verify: a known 10 mm shift in the object produces the expected pixel shift.
-33. Calibrate the hand-eye offset `cam_offset_x/y`: center a box under the gripper, read the residual pixel offset, store it. ✔ verify: a centered box reports ~0,0 mm.
+### Stage 5 — Brain firmware: motion + homing
+28. Integrate **FastAccelStepper**; conservative max speed + acceleration. ✔ verify: each axis does a clean 50 mm move.
+29. Homing on ONE axis: fast approach → stop on trigger → back off 3 mm → slow re-approach → set zero. ✔ verify: repeatable home, no hard-stop crash.
+30. Add debounce (5–10 ms) + NC fail-safe read. ✔ verify: unplugging the endstop reads as "triggered."
+31. Calibrate `steps_per_mm`: command 100 mm, measure, correct, repeat to <0.2 mm error. ✔ verify: 100 mm = 100 mm.
+32. Extend homing + calibration to all 3 axes; order **Z → X → Y**. ✔ verify: full home, no collision.
+33. Add **soft limits** per axis. ✔ verify: an out-of-range move is refused.
 
-### Stage 6 — Serial link CAM ↔ brain
-34. Wire CAM TX (GPIO13) → brain Serial2 RX (GPIO16); common GND already done. Optional: brain TX (17) → CAM trigger (14).
-35. Implement the §8 protocol. Start free-running (CAM sends `QR:…` when it sees one). ✔ verify: brain prints complete, uncorrupted lines.
-36. Switch to trigger mode: brain sends `SCAN`, CAM replies `QR:…;DX:…;DY:…;TH:…` or `NOQR`. ✔ verify: one clean request/response per trigger.
+### Stage 6 — Gripper + taught positions
+34. Drive SG90 on LEDC (50 Hz); find open/close pulse widths. ✔ verify: clean open/close, no buzzing at rest.
+35. Rule: **always raise Z fully before any XY move.** ✔ verify: every XY move starts Z-up.
+36. Jog and record absolute steps for `PICK_POS`, the scan/grab height, and the 9 `SHELF[3][3]` cells. ✔ verify: GOTO each lands correctly.
+37. Dry-run a full pick→place with NO vision (hard-coded target). ✔ verify: grabs and places repeatably.
 
-### Stage 7 — Integration: full state machine
-37. Wire the §7 flow: HOME → PICK_POS → SCAN → CORRECT (apply dx,dy) → grab → DECIDE_TARGET → PLACE → repeat.
-38. Test the vision correction alone: deliberately misplace a box by 3–5 mm. ✔ verify: the robot nudges and still grabs it centered.
-39. Test sorting: run 2–3 boxes with different prefixes (MS/BV/CJ). ✔ verify: each lands in the right column, first free cell.
-40. Add error handling: scan timeout → reject bin; invalid/partial QR → ignored; column full → handle gracefully. ✔ verify: a blank/garbage box goes to reject, not a random shelf.
+### Stage 7 — Camera mounting + offset calibration
+38. Calibrate `mm_per_px`: known-size object, read pixel span, compute mm/px (§6.4). ✔ verify: a 10 mm shift gives the expected pixel shift.
+39. Calibrate hand-eye offset `cam_offset_x/y`: center a box under the gripper, read residual pixel offset, store it. ✔ verify: a centered box reports ~0,0 mm.
 
-### Stage 8 — Calibration & robustness
-41. Fine-tune the 9 shelf coordinates until placement is clean. ✔ verify: <0.5 mm repeatability returning 10× to one cell.
-42. Raise speeds/accelerations gradually, then back off 20%. ✔ verify: no lost steps (home still matches after a long run).
-43. Endurance test: 50–100 continuous cycles. ✔ verify: no drift, no missed reads, drivers stable in temperature.
+### Stage 8 — Serial link CAM ↔ brain (full protocol)
+40. Wire CAM TX (13) → brain Serial2 RX (16); common GND. Optional: brain TX (17) → CAM trigger (14).
+41. Implement §8; start free-running. ✔ verify: brain prints complete, uncorrupted lines.
+42. Switch to trigger mode: brain sends `SCAN`, CAM replies `QR:…;DX:…;DY:…;TH:…` or `NOQR`. ✔ verify: one clean request/response per trigger.
 
-### Stage 9 — Finishing
-44. Mount electronics in an enclosure; strain-relief all cables; keep the fuse on 12V.
-45. Add an **emergency stop** that cuts driver EN + motor power. ✔ verify: pressing it stops motion immediately and the machine recovers cleanly after release + re-home.
-46. (Optional) status LEDs and serial/SD logging of each sort.
-47. Final acceptance run: load a mixed batch, press start, walk away. ✔ verify: the batch is sorted correctly end-to-end. **Product done.**
+### Stage 9 — Integration: full state machine
+43. Wire the §7 flow: HOME → PICK_POS → SCAN → CORRECT (apply dx,dy) → grab → DECIDE_TARGET → PLACE → repeat.
+44. Test vision correction: misplace a box 3–5 mm. ✔ verify: it nudges and still grabs centered.
+45. Test sorting with MS/BV/CJ. ✔ verify: each lands in the right column, first free cell.
+46. Add error handling: scan timeout → reject bin; invalid QR → ignored; column full → graceful. ✔ verify: a garbage box goes to reject.
 
-> Suggested order if you want to parallelize: do Stages 0–4 (mechanics + brain motion) first since everything depends on reliable motion; the ESP32-CAM work in Stage 5 can be developed in parallel on the bench, then merged at Stage 6.
+### Stage 10 — Calibration & robustness
+47. Fine-tune the 9 shelf coordinates. ✔ verify: <0.5 mm repeatability returning 10× to one cell.
+48. Raise speeds/accelerations, then back off 20%. ✔ verify: no lost steps (home still matches after a long run).
+49. Endurance test: 50–100 continuous cycles. ✔ verify: no drift, stable driver temps.
+
+### Stage 11 — Finishing
+50. Enclosure, cable strain-relief, fuse on 12V.
+51. **Emergency stop** that cuts driver EN + motor power. ✔ verify: stops motion immediately, recovers after release + re-home.
+52. (Optional) status LEDs, serial/SD logging.
+53. Final acceptance run: load a mixed batch, press start, walk away. ✔ verify: sorted correctly end-to-end. **Product done.**
+
+> Parallelizing tip: Stage 0 (schematic) and Stage 1 (camera test) are both bench work with no machine — do them first and in parallel. Mechanics (Stage 3) can start as soon as parts are in hand, independent of the camera result.
