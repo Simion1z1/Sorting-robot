@@ -43,7 +43,12 @@
 #define STATUS_LED_PIN    33       // onboard red LED (active LOW) — blinks on a read
 // ----------------------------------------------------------------------------
 
-ESP32QRCodeReader reader(CAMERA_MODEL_AI_THINKER);
+// Framesize MUST be set here (constructor): esp_camera_init() allocates the
+// frame buffer for THIS size. Changing it later via set_framesize() to anything
+// larger gives no valid frames. SVGA (800x600) is the library's max (it refuses
+// anything > FRAMESIZE_SVGA) and matches the resolution you verified clear in the
+// webserver. Drop to FRAMESIZE_VGA if you want faster decodes / less memory.
+ESP32QRCodeReader reader(CAMERA_MODEL_AI_THINKER, FRAMESIZE_SVGA);
 HardwareSerial    Brain(1);        // UART1 -> brain
 
 String        lastCode   = "";
@@ -110,6 +115,42 @@ void onQrCodeTask(void *pv) {
   }
 }
 
+// Apply the same camera settings that gave a sharp image in the webserver.
+// NOTE: the QR reader decodes GRAYSCALE frames, so JPEG "Quality" is irrelevant
+// here — what matters for quirc is RESOLUTION (more pixels on the QR) + contrast.
+// Must be called AFTER reader.setup() (camera must already be initialised).
+void applyCameraTuning() {
+  sensor_t *s = esp_camera_sensor_get();
+  if (!s) {
+    Serial.println("[CAM] sensor_get failed — tuning skipped");
+    return;
+  }
+  // NOTE: framesize is set in the constructor (SVGA), NOT here — raising it at
+  // runtime above the init size kills the frame stream. Only image controls below.
+
+  // Match the webserver panel (centred sliders = 0):
+  s->set_brightness(s, 0);
+  s->set_contrast(s, 1);          // +1 crisps the black/white edges for quirc
+  s->set_saturation(s, 0);        // ignored in grayscale, harmless
+  s->set_whitebal(s, 1);          // AWB on
+  s->set_awb_gain(s, 1);          // AWB gain on
+  s->set_wb_mode(s, 0);           // WB mode = Auto
+  s->set_exposure_ctrl(s, 1);     // AEC sensor on
+  s->set_aec2(s, 0);              // AEC DSP off
+  s->set_ae_level(s, 0);
+  s->set_gain_ctrl(s, 1);         // AGC on
+  s->set_gainceiling(s, GAINCEILING_2X);
+  s->set_bpc(s, 0);
+  s->set_wpc(s, 1);
+  s->set_raw_gma(s, 1);
+  s->set_lenc(s, 1);              // lens correction on
+  s->set_dcw(s, 1);
+  s->set_hmirror(s, 0);
+  s->set_vflip(s, 0);
+
+  Serial.println("[CAM] tuning applied: SVGA, AWB/AEC/AGC on, contrast +1");
+}
+
 void setup() {
   Serial.begin(115200);                                        // USB debug (UART0)
   Brain.begin(BRAIN_BAUD, SERIAL_8N1, BRAIN_RX_PIN, BRAIN_TX_PIN); // link to brain (UART1)
@@ -127,6 +168,7 @@ void setup() {
   Serial.println(USE_TRIGGER ? "TRIGGER (waiting for SCAN\\n)" : "FREE-RUNNING");
 
   reader.setup();
+  applyCameraTuning();                                         // <-- SVGA + webserver settings
   Serial.println("Camera initialised. Hold a printed QR ~10-20 cm away.");
   reader.beginOnCore(1);
 

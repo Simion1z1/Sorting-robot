@@ -16,7 +16,8 @@ Follow this net-by-net to rebuild the schematic in EasyEDA. It matches the pin m
 | U2 | ESP32-CAM (AI-Thinker) | vision node |
 | A1 / A2 / A3 | A4988 driver | X / Y / Z |
 | M1 / M2 / M3 | NEMA 17 stepper | X / Y / Z (inside actuators) |
-| SW1 / SW2 / SW3 | SS-5GL endstop | X / Y / Z home switches |
+| SW1 / SW2 / SW3 | SS-5GL endstop | X / Y / Z home (MIN) switches |
+| SW4 / SW5 / SW6 | SS-5GL endstop | X / Y / Z end-of-travel (MAX), the 3 NC switches wired in series on one pin (GPIO4) |
 | SV1 | SG90 servo | gripper |
 | C1 / C2 / C3 | 100 µF / 35V electrolytic | one across each A4988 VMOT–GND |
 | C4 | 470–1000 µF electrolytic | across ESP32-CAM 5V–GND |
@@ -39,7 +40,7 @@ Follow this net-by-net to rebuild the schematic in EasyEDA. It matches the pin m
 **Net `GND`** (one common ground — CRITICAL, tie everything):
 `PSU1(–)`, `F1` return side, `BK1.IN–`, `BK1.OUT–`, `BK2.IN–`, `BK2.OUT–`,
 `U1.GND`, `U2.GND`, `A1.GND (both)`, `A2.GND (both)`, `A3.GND (both)`,
-`M1/M2/M3` coil-common is NOT grounded (coils float), `SW1/2/3.COM`, `SV1.GND (brown)`,
+`M1/M2/M3` coil-common is NOT grounded (coils float), `SW1/2/3.COM`, `SW6.COM` (far end of the MAX series chain), `SV1.GND (brown)`,
 `C1–C5` negative legs.
 
 > The single most common failure is a missing common GND between the two ESP32s and the bucks. Make `GND` one continuous net.
@@ -69,7 +70,7 @@ Follow this net-by-net to rebuild the schematic in EasyEDA. It matches the pin m
 
 > ENABLE is active-LOW. Optionally add a 10k pull-up from EN to 3V3 so the drivers stay disabled during boot.
 
-### Endstops (SS-5GL, NC wiring, INPUT_PULLUP)
+### Endstops — MIN/home (SS-5GL, NC wiring, INPUT_PULLUP)
 | Net | From (U1) | Switch | Switch other side |
 |---|---|---|---|
 | ES_X | GPIO21 | SW1.NC | SW1.COM → GND |
@@ -77,6 +78,13 @@ Follow this net-by-net to rebuild the schematic in EasyEDA. It matches the pin m
 | ES_Z | GPIO23 | SW3.NC | SW3.COM → GND |
 
 > Use the COM and NC terminals of the SS-5GL (leave NO unused). With `INPUT_PULLUP`: closed switch = LOW, triggered/broken wire = HIGH (fail-safe).
+
+### Endstops — MAX/end-of-travel (SS-5GL, NC, 3× in series on one pin)
+The three MAX switches are **daisy-chained in series** between GPIO4 and GND, read with the pin's **internal** `INPUT_PULLUP` (no external resistor). Net `ES_MAX`:
+
+`U1.GPIO4` → `SW4.NC` · `SW4.COM` → `SW5.NC` · `SW5.COM` → `SW6.NC` · `SW6.COM` → `GND`
+
+> All three closed (no limit) = GPIO4 LOW. Any switch opening (limit hit) **or** a broken wire anywhere in the chain = GPIO4 HIGH → fault/stop (fully fail-safe). You learn *that* a MAX limit tripped, not *which* axis — fine for a safety end-stop backed by the soft limits. This is a hard end-of-travel limit, not a homing reference.
 
 ### Servo
 | Net | From (U1) | To |
@@ -146,9 +154,10 @@ U0R/U0T   → only for flashing via the HW-381 / ESP32-CAM-MB board
 | GPIO27 | Z_STEP |
 | GPIO14 | Z_DIR |
 | GPIO13 | EN (shared) |
-| GPIO21 | ES_X |
-| GPIO22 | ES_Y |
-| GPIO23 | ES_Z |
+| GPIO21 | ES_X (MIN) |
+| GPIO22 | ES_Y (MIN) |
+| GPIO23 | ES_Z (MIN) |
+| GPIO4  | ES_MAX (X+Y+Z NC switches in series, INPUT_PULLUP) |
 | GPIO19 | SERVO_PWM |
 | GPIO16 | QR_RX (Serial2 RX) |
 | GPIO17 | SCAN_TX (Serial2 TX, optional) |
@@ -160,9 +169,9 @@ Avoid for signals: GPIO 0/2/12/15 (strapping), 6–11 (flash), 34–39 (input-on
 
 ## 7. EasyEDA build order (suggested)
 
-1. Place U1, U2, A1–A3, BK1, BK2, PSU1/F1, SW1–3, SV1, M1–M3, caps.
+1. Place U1, U2, A1–A3, BK1, BK2, PSU1/F1, SW1–6, SV1, M1–M3, caps.
 2. Wire the three power nets (`+12V`, `+3V3`, `+5V`) and the single `GND` net first — use net labels, not long wires, to keep it readable.
-3. Add the STEP/DIR/EN nets, then endstops, servo, UART.
+3. Add the STEP/DIR/EN nets, then endstops (MIN on 21/22/23, MAX chain SW4→SW5→SW6 on GPIO4), servo, UART.
 4. Drop the decoupling caps next to their components.
 5. Run **DRC**. Fix any unconnected pins. Export the schematic PDF.
 

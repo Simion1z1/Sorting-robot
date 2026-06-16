@@ -82,7 +82,7 @@ At 12V, the NEMA 17 gives good torque at low–medium speeds; at high speeds tor
 | Linear screw actuator + NEMA17 | X, Y, Z axes | 3 |
 | NEMA 17 (1.7 A, 1.8°, 42×42×40) | Stepper motors | 3 (in actuators) |
 | A4988 driver | Stepper control | 3 |
-| SS-5GL mechanical endstop (5A 125VAC) | Homing / limit | 3 (min.) |
+| SS-5GL mechanical endstop (5A 125VAC) | Homing (MIN) + end-of-travel (MAX) | 6 |
 | 12V PSU | Power | 1 |
 | ESP32-CAM + ESP32-CAM-MB (HW-381) | Vision / QR | 1 |
 | SG90 servo | Gripper actuation | 1 |
@@ -95,7 +95,7 @@ At 12V, the NEMA 17 gives good torque at low–medium speeds; at high speeds tor
 - **Heatsinks** for the 3 A4988s (mandatory at this current).
 - **100 µF / 35V electrolytic capacitors** on each A4988's VMOT input (protects the driver from spikes — the driver can burn out without them). Plus 470–1000 µF on the ESP32-CAM power.
 - **Dedicated 12V→5V buck** for the ESP32-CAM (see §2.2). Recommended separate from the brain's.
-- **6 endstops** if you also want end (max) limits, not just homing (min). Minimum 3 for homing.
+- **6 endstops total**: 3 for homing (MIN, one per axis on GPIO 21/22/23) + 3 end-of-travel (MAX) wired **in series on a single pin GPIO4** with the internal pull-up — no extra resistors (see §4.2).
 - **Drag chain (cable carrier)** + flexible wire for the cabling to the moving Z carriage.
 - **Connectors** (Dupont/JST), **terminal block**, **fuse** on the 12V (e.g. 5A).
 - **Frame / extrusion** for the orthogonal mounting of the 3 actuators (see §5.1) if the actuators don't come with a mounting kit.
@@ -114,7 +114,7 @@ Common GND for EVERYTHING.
 ```
 
 ### 4.2 Pin map — ESP32 WROOM-32D (brain)
-Intentionally avoided: GPIO 0/2/12/15 (strapping), 6–11 (flash SPI), 34–39 (input-only).
+Intentionally avoided: GPIO 0/2/12/15 (strapping), 6–11 (flash SPI), 34–39 (input-only, no internal pull-up).
 
 | Function | GPIO | Notes |
 |---|---|---|
@@ -125,15 +125,18 @@ Intentionally avoided: GPIO 0/2/12/15 (strapping), 6–11 (flash SPI), 34–39 (
 | Z STEP | 27 | |
 | Z DIR | 14 | |
 | ENABLE (shared across all 3 A4988) | 13 | active LOW |
-| Endstop X | 21 | `INPUT_PULLUP`, contact to GND |
-| Endstop Y | 22 | `INPUT_PULLUP` |
-| Endstop Z | 23 | `INPUT_PULLUP` |
+| Endstop X — home/MIN | 21 | `INPUT_PULLUP`, contact to GND |
+| Endstop Y — home/MIN | 22 | `INPUT_PULLUP` |
+| Endstop Z — home/MIN | 23 | `INPUT_PULLUP` |
+| Endstops MAX (X+Y+Z, 3× in series) | 4 | `INPUT_PULLUP`; the 3 NC switches daisy-chained between GPIO4 and GND |
 | Servo SG90 (PWM) | 19 | LEDC channel, 50 Hz |
 | UART2 RX (from CAM) | 16 | `Serial2` |
 | UART2 TX (trigger to CAM, optional) | 17 | |
 | Status LED (optional) | 2 | strapping — LED output only |
 
 **MS1/MS2/MS3** (microstepping) — **NOT** on GPIO; set them with jumpers on the A4988 board (e.g. all HIGH = 1/16). Saves 9 pins.
+
+> **MAX endstops — 3 in series on GPIO4 (no resistors):** the 3 NC end-of-travel switches are daisy-chained in series between **GPIO4** and **GND**, read with the pin's **internal** `INPUT_PULLUP` — no external resistors. When all three are closed (none at a limit) GPIO4 reads LOW; if **any** switch opens (limit hit) *or* a wire breaks anywhere in the chain, GPIO4 goes HIGH → fault/stop (fully fail-safe). Trade-off: you know *that* a MAX limit was hit, not *which* axis — fine for a safety end-stop, since the soft limits (§5.3) already prevent normal over-travel. Chain: `GPIO4 → SW4.NC, SW4.COM → SW5.NC, SW5.COM → SW6.NC, SW6.COM → GND`. The MAX chain is optional; if you only home, you can leave it unpopulated.
 
 ### 4.3 Pin map — ESP32-CAM (AI-Thinker)
 Camera + PSRAM take most pins. Usable free: GPIO 12, 13, 14, 15, 2, 4, 16. **Strapping caution:** GPIO12 must be LOW at boot, 15 and 2 have constraints.
@@ -188,7 +191,8 @@ steps_per_mm = (200 × 16) / 4 = 800 steps/mm
   3. **Y** to its endstop → Y = 0.
 - For each axis: fast approach → on contact stop → back off ~2–5 mm → slow re-approach → set zero. This removes mechanical debounce error.
 - Add software **debounce** (5–10 ms) on the endstop reads.
-- Define **soft limits** (software limits in mm) per axis, so you don't force the end of travel if a max endstop is missing.
+- **Homing always references the MIN switches (GPIO 21/22/23).** The MAX switches are a hard end-of-travel limit, daisy-chained in series on GPIO4: read that one pin in the motion loop and immediately stop/fault if it trips — a backup to the soft limits, not a homing reference (it does not tell you which axis tripped).
+- Define **soft limits** (software limits in mm) per axis, so you don't force the end of travel even before the MAX switch is hit.
 
 ### 5.4 Step-generation library
 Use **FastAccelStepper** (optimized for the ESP32: timing on hardware RMT/MCPWM, up to ~200 kHz, smooth motion for all 3 axes simultaneously). Avoid pure-software AccelStepper on the ESP32 for 3 motors at high microstepping — it saturates the CPU and loses steps above ~4 kHz/motor. Set acceleration/max-speed profiles per axis.
@@ -313,7 +317,7 @@ Parameters: **115200 baud**, 8N1. Both boards are 3.3V → direct TX↔RX connec
 Order chosen for this build: **design the schematic first, then de-risk the camera early with a standalone QR test, then build the machine.** Tackling the riskiest unknown (QR reading) before investing in mechanics means you find out early whether the ESP32-CAM is good enough or whether you need a fallback reader (§2.3).
 
 **Phase 0 — EasyEDA schematic (design first)**
-- Draw the full schematic per pin map §4: the 3 A4988s, 12V distribution + fuse, the two bucks, ESP32-CAM, the brain, the 3 endstops, SG90, and the protection capacitors (100µF on each VMOT, 470µF on the CAM).
+- Draw the full schematic per pin map §4: the 3 A4988s, 12V distribution + fuse, the two bucks, ESP32-CAM, the brain, the 6 endstops (3 MIN one-per-pin + 3 MAX in series on GPIO4), SG90, and the protection capacitors (100µF on each VMOT, 470µF on the CAM).
 - Mark the common-ground net explicitly and the CAM TX = GPIO13 choice.
 - This freezes the pin assignments that both firmwares depend on.
 
@@ -330,7 +334,7 @@ Order chosen for this build: **design the schematic first, then de-risk the came
 **Phase 3 — Mechanics**
 - Mount the 3 actuators orthogonally (Y base → X bridge → Z vertical).
 - Mount the gripper (GrabCAD) + SG90 + ESP32-CAM holder on the Z carriage.
-- Install the endstops (one at the "home" end of each axis).
+- Install the endstops: one MIN/home switch at the "home" end of each axis, plus one MAX switch at the far end of each axis (6 total).
 - Route the cabling through the drag chain to the moving carriage.
 
 **Phase 4 — Power + one-axis electronics**
@@ -400,7 +404,7 @@ Order chosen for this build: **design the schematic first, then de-risk the came
 
 1. **ESP32-CAM code** — capture + QR decode + serial protocol (§8).
 2. **Brain ESP32 code (WROOM-32D)** — FastAccelStepper, homing, state machine (§7), SG90, QR parsing, sorting logic (§6).
-3. **EasyEDA schematic** — per pin map §4: the 3 A4988s, 12V distribution, the bucks, ESP32-CAM, the brain, the endstops, SG90, the protection capacitors.
+3. **EasyEDA schematic** — per pin map §4: the 3 A4988s, 12V distribution, the bucks, ESP32-CAM, the brain, the 6 endstops (3 MIN + 3 MAX in series on GPIO4), SG90, the protection capacitors.
 
 Recommended to do the EasyEDA schematic + the brain code in parallel, since the §4 pin map ties both together.
 
@@ -411,7 +415,7 @@ Recommended to do the EasyEDA schematic + the brain code in parallel, since the 
 This is the granular, do-this-then-that checklist, in the chosen order (schematic → camera test → build). Each step is small and verifiable; don't move on until the "✔ verify" passes. Stages map to §9.
 
 ### Stage 0 — EasyEDA schematic (design first)
-1. Create the EasyEDA project; place the brain (WROOM-32D), ESP32-CAM, 3× A4988, 2 bucks, 12V input + fuse, 3 endstops, SG90. 
+1. Create the EasyEDA project; place the brain (WROOM-32D), ESP32-CAM, 3× A4988, 2 bucks, 12V input + fuse, 6 endstops (3 MIN one-per-pin + 3 MAX daisy-chained in series on GPIO4), SG90. 
 2. Wire per pin map §4.2/§4.3; add the protection caps (100µF per VMOT, 470µF on CAM). ✔ verify: every pin in §4 has a net, no pin double-assigned.
 3. Draw the **common-ground** net across PSU, both bucks, both ESP32s; set CAM TX = GPIO13. ✔ verify: one GND net, CAM not using GPIO12 for TX.
 4. Run the EasyEDA DRC (design rule check). ✔ verify: no unconnected/conflicting nets. Export the schematic PDF.
@@ -434,7 +438,7 @@ This is the granular, do-this-then-that checklist, in the chosen order (schemati
 15. Mount the Z actuator vertically on the X carriage. ✔ verify: Z ⟂ table.
 16. Print/assemble the GrabCAD parallel gripper; mount it + the SG90 on the Z carriage.
 17. Mount the ESP32-CAM holder looking down at the grab point, at a fixed height. Note that height — it's your scan distance.
-18. Install the 3 endstops, one at the home end of each axis, tripping before the hard stop. ✔ verify: each switch clicks at home.
+18. Install the 6 endstops: one MIN/home switch at the home end of each axis + one MAX switch at the far end, each tripping before the hard stop. ✔ verify: each switch clicks at its limit.
 19. Route all moving wires through the drag chain; leave service loops. ✔ verify: full travel, no wire pull/snag.
 
 ### Stage 4 — Power & one-axis electronics
@@ -454,6 +458,7 @@ This is the granular, do-this-then-that checklist, in the chosen order (schemati
 31. Calibrate `steps_per_mm`: command 100 mm, measure, correct, repeat to <0.2 mm error. ✔ verify: 100 mm = 100 mm.
 32. Extend homing + calibration to all 3 axes; order **Z → X → Y**. ✔ verify: full home, no collision.
 33. Add **soft limits** per axis. ✔ verify: an out-of-range move is refused.
+33b. Read the MAX limit chain (GPIO4, `INPUT_PULLUP`) in the motion loop; trip → immediate stop/fault. ✔ verify: pressing any one of the 3 series MAX switches halts motion.
 
 ### Stage 6 — Gripper + taught positions
 34. Drive SG90 on LEDC (50 Hz); find open/close pulse widths. ✔ verify: clean open/close, no buzzing at rest.
