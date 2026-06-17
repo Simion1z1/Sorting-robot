@@ -15,12 +15,14 @@
     <rect x="386" y="92"  width="26" height="15" rx="2" fill="#1a1a1a"/><text x="399" y="103" text-anchor="middle" fill="#fff">3V3</text>
     <rect x="386" y="116" width="26" height="15" rx="2" fill="#1a1a1a"/><text x="399" y="127" text-anchor="middle" fill="#fff">GND</text>
     <rect x="386" y="182" width="26" height="15" rx="2" fill="#1a1a1a"/><text x="399" y="193" text-anchor="middle" fill="#fff">16</text>
-    <rect x="386" y="206" width="26" height="15" rx="2" fill="#1a1a1a"/><text x="399" y="217" text-anchor="middle" fill="#fff">17</text>
+    <rect x="386" y="206" width="26" height="15" rx="2" fill="#1a1a1a"/><text x="399" y="217" text-anchor="middle" fill="#fff">5</text>
     <rect x="386" y="292" width="26" height="15" rx="2" fill="#1a1a1a"/><text x="399" y="303" text-anchor="middle" fill="#fff">19</text>
-    <rect x="386" y="388" width="26" height="15" rx="2" fill="#1a1a1a"/><text x="399" y="399" text-anchor="middle" fill="#fff">21</text>
-    <rect x="386" y="412" width="26" height="15" rx="2" fill="#1a1a1a"/><text x="399" y="423" text-anchor="middle" fill="#fff">22</text>
-    <rect x="386" y="436" width="26" height="15" rx="2" fill="#1a1a1a"/><text x="399" y="447" text-anchor="middle" fill="#fff">23</text>
-    <rect x="386" y="460" width="26" height="15" rx="2" fill="#1a1a1a"/><text x="399" y="471" text-anchor="middle" fill="#fff">4</text>
+    <rect x="386" y="376" width="26" height="15" rx="2" fill="#1a1a1a"/><text x="399" y="387" text-anchor="middle" fill="#fff">21</text>
+    <rect x="386" y="400" width="26" height="15" rx="2" fill="#1a1a1a"/><text x="399" y="411" text-anchor="middle" fill="#fff">22</text>
+    <rect x="386" y="424" width="26" height="15" rx="2" fill="#1a1a1a"/><text x="399" y="435" text-anchor="middle" fill="#fff">23</text>
+    <rect x="386" y="448" width="26" height="15" rx="2" fill="#1a1a1a"/><text x="399" y="459" text-anchor="middle" fill="#fff">4</text>
+    <rect x="386" y="472" width="26" height="15" rx="2" fill="#1a1a1a"/><text x="399" y="483" text-anchor="middle" fill="#fff">18</text>
+    <rect x="386" y="496" width="26" height="15" rx="2" fill="#1a1a1a"/><text x="399" y="507" text-anchor="middle" fill="#fff">17</text>
   </g>
   <!-- right pads -->
   <g font-family="Consolas, monospace" font-size="10.5" font-weight="700">
@@ -46,7 +48,7 @@
   <rect x="20" y="178" width="300" height="92" rx="8" fill="none" stroke="#999" stroke-width="1.5"/>
   <text x="32" y="198" font-size="12.5" font-weight="700" fill="#1a1a1a">ESP32-CAM (vision)</text>
   <text x="32" y="217" font-size="11" fill="#1a1a1a">GPIO13 (TX) &#8594; brain <tspan font-weight="700">16</tspan>   &#183;   QR data</text>
-  <text x="32" y="235" font-size="11" fill="#1a1a1a">GPIO14 (trig) &#8592; brain <tspan font-weight="700">17</tspan>   (opt)</text>
+  <text x="32" y="235" font-size="11" fill="#1a1a1a">GPIO14 (trig) &#8592; brain <tspan font-weight="700">5</tspan></text>
   <text x="32" y="253" font-size="11" fill="#1a1a1a">5V &#8592; <tspan fill="#e08a2e">+5V</tspan> (+470&#181;F)   GND &#8592; <tspan fill="#6b7280">GND</tspan></text>
 
   <!-- servo -->
@@ -56,12 +58,13 @@
   <text x="32" y="336" font-size="11" fill="#1a1a1a">red &#8592; <tspan fill="#e08a2e">+5V</tspan>    brown &#8592; <tspan fill="#6b7280">GND</tspan></text>
 
   <!-- endstops -->
-  <rect x="20" y="358" width="300" height="110" rx="8" fill="none" stroke="#999" stroke-width="1.5"/>
+  <rect x="20" y="358" width="300" height="162" rx="8" fill="none" stroke="#999" stroke-width="1.5"/>
   <text x="32" y="378" font-size="12.5" font-weight="700" fill="#1a1a1a">ENDSTOPS SS-5GL (NC) &#215;6</text>
-  <text x="32" y="397" font-size="11" fill="#1a1a1a">MIN  X&#8594;<tspan font-weight="700">21</tspan>  Y&#8594;<tspan font-weight="700">22</tspan>  Z&#8594;<tspan font-weight="700">23</tspan>   COM&#8594;<tspan fill="#6b7280">GND</tspan></text>
-  <text x="32" y="415" font-size="11" fill="#1a1a1a">MAX  3&#215; NC in series &#8594; <tspan font-weight="700">4</tspan>   (last COM&#8594;<tspan fill="#6b7280">GND</tspan>)</text>
-  <text x="32" y="433" font-size="10" fill="#555">4&#8211;SW4&#8211;SW5&#8211;SW6&#8211;GND &#183; INPUT_PULLUP, no resistors</text>
-  <text x="32" y="451" font-size="10" fill="#555">any open / broken wire = HIGH (fail-safe)</text>
+  <text x="32" y="399" font-size="11" fill="#1a1a1a">MIN  X&#8594;<tspan font-weight="700">21</tspan>   Y&#8594;<tspan font-weight="700">22</tspan>   Z&#8594;<tspan font-weight="700">23</tspan>   COM&#8594;<tspan fill="#6b7280">GND</tspan></text>
+  <text x="32" y="421" font-size="11" fill="#1a1a1a">MAX  X&#8594;<tspan font-weight="700">4</tspan>    Y&#8594;<tspan font-weight="700">18</tspan>   Z&#8594;<tspan font-weight="700">17</tspan>   COM&#8594;<tspan fill="#6b7280">GND</tspan></text>
+  <text x="32" y="443" font-size="10" fill="#555">each NC&#8594;pin, COM&#8594;GND &#183; INPUT_PULLUP, no resistors</text>
+  <text x="32" y="461" font-size="10" fill="#555">broken wire = HIGH (fail-safe)</text>
+  <text x="32" y="479" font-size="10" fill="#555">CAM scan trigger on GPIO5 (kept; idle-HIGH strapping)</text>
 
   <!-- ===== RIGHT PERIPHERALS (A4988) ===== -->
   <rect x="700" y="92" width="260" height="108" rx="8" fill="none" stroke="#999" stroke-width="1.5"/>
@@ -89,12 +92,14 @@
   <path fill="none" stroke="#3b82c4" stroke-width="1.8" d="M386 99  C350 99  340 116 320 116"/>
   <path fill="none" stroke="#6b7280" stroke-width="1.8" d="M386 123 C350 123 340 134 320 134"/>
   <path fill="none" stroke="#777" stroke-width="1.6" d="M386 189 C350 189 340 220 320 220"/>
-  <path fill="none" stroke="#777" stroke-width="1.6" d="M386 213 C352 213 340 232 320 232"/>
+  <path fill="none" stroke="#777" stroke-width="1.6" d="M386 213 C352 213 340 235 320 235"/>
   <path fill="none" stroke="#777" stroke-width="1.6" d="M386 299 C352 299 340 316 320 316"/>
-  <path fill="none" stroke="#777" stroke-width="1.6" d="M386 395 C352 395 340 400 320 400"/>
-  <path fill="none" stroke="#777" stroke-width="1.6" d="M386 419 C352 419 340 417 320 417"/>
-  <path fill="none" stroke="#777" stroke-width="1.6" d="M386 443 C352 443 340 433 320 433"/>
-  <path fill="none" stroke="#777" stroke-width="1.6" d="M386 467 C352 467 340 415 320 415"/>
+  <path fill="none" stroke="#777" stroke-width="1.6" d="M386 383 C352 383 340 399 320 399"/>
+  <path fill="none" stroke="#777" stroke-width="1.6" d="M386 407 C352 407 340 421 320 421"/>
+  <path fill="none" stroke="#777" stroke-width="1.6" d="M386 431 C352 431 340 443 320 443"/>
+  <path fill="none" stroke="#777" stroke-width="1.6" d="M386 455 C352 455 340 455 320 455"/>
+  <path fill="none" stroke="#777" stroke-width="1.6" d="M386 479 C352 479 340 471 320 471"/>
+  <path fill="none" stroke="#777" stroke-width="1.6" d="M386 503 C352 503 340 487 320 487"/>
 
   <!-- ===== WIRES RIGHT ===== -->
   <path fill="none" stroke="#777" stroke-width="1.6" d="M604 123 C650 123 660 125 700 125"/>

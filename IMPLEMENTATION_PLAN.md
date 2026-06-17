@@ -95,7 +95,7 @@ At 12V, the NEMA 17 gives good torque at low–medium speeds; at high speeds tor
 - **Heatsinks** for the 3 A4988s (mandatory at this current).
 - **100 µF / 35V electrolytic capacitors** on each A4988's VMOT input (protects the driver from spikes — the driver can burn out without them). Plus 470–1000 µF on the ESP32-CAM power.
 - **Dedicated 12V→5V buck** for the ESP32-CAM (see §2.2). Recommended separate from the brain's.
-- **6 endstops total**: 3 for homing (MIN, one per axis on GPIO 21/22/23) + 3 end-of-travel (MAX) wired **in series on a single pin GPIO4** with the internal pull-up — no extra resistors (see §4.2).
+- **6 endstops total**, each on its own pin with the internal pull-up — no extra resistors: 3 homing (MIN) on GPIO 21/22/23 + 3 end-of-travel (MAX) on GPIO 4/18/17 (see §4.2). The CAM scan trigger moves to GPIO5 so the hardware trigger is kept.
 - **Drag chain (cable carrier)** + flexible wire for the cabling to the moving Z carriage.
 - **Connectors** (Dupont/JST), **terminal block**, **fuse** on the 12V (e.g. 5A).
 - **Frame / extrusion** for the orthogonal mounting of the 3 actuators (see §5.1) if the actuators don't come with a mounting kit.
@@ -125,18 +125,22 @@ Intentionally avoided: GPIO 0/2/12/15 (strapping), 6–11 (flash SPI), 34–39 (
 | Z STEP | 27 | |
 | Z DIR | 14 | |
 | ENABLE (shared across all 3 A4988) | 13 | active LOW |
-| Endstop X — home/MIN | 21 | `INPUT_PULLUP`, contact to GND |
+| Endstop X — home/MIN | 21 | `INPUT_PULLUP`, NC contact to GND |
 | Endstop Y — home/MIN | 22 | `INPUT_PULLUP` |
 | Endstop Z — home/MIN | 23 | `INPUT_PULLUP` |
-| Endstops MAX (X+Y+Z, 3× in series) | 4 | `INPUT_PULLUP`; the 3 NC switches daisy-chained between GPIO4 and GND |
+| Endstop X — MAX | 4 | `INPUT_PULLUP`, NC contact to GND |
+| Endstop Y — MAX | 18 | `INPUT_PULLUP` |
+| Endstop Z — MAX | 17 | `INPUT_PULLUP`, NC contact to GND |
 | Servo SG90 (PWM) | 19 | LEDC channel, 50 Hz |
-| UART2 RX (from CAM) | 16 | `Serial2` |
-| UART2 TX (trigger to CAM, optional) | 17 | |
+| UART2 RX (from CAM) | 16 | `Serial2` RX |
+| UART2 TX (scan trigger → CAM) | 5 | `Serial2` TX; strapping (HIGH at boot) — fine for a TX line that idles HIGH |
 | Status LED (optional) | 2 | strapping — LED output only |
 
 **MS1/MS2/MS3** (microstepping) — **NOT** on GPIO; set them with jumpers on the A4988 board (e.g. all HIGH = 1/16). Saves 9 pins.
 
-> **MAX endstops — 3 in series on GPIO4 (no resistors):** the 3 NC end-of-travel switches are daisy-chained in series between **GPIO4** and **GND**, read with the pin's **internal** `INPUT_PULLUP` — no external resistors. When all three are closed (none at a limit) GPIO4 reads LOW; if **any** switch opens (limit hit) *or* a wire breaks anywhere in the chain, GPIO4 goes HIGH → fault/stop (fully fail-safe). Trade-off: you know *that* a MAX limit was hit, not *which* axis — fine for a safety end-stop, since the soft limits (§5.3) already prevent normal over-travel. Chain: `GPIO4 → SW4.NC, SW4.COM → SW5.NC, SW5.COM → SW6.NC, SW6.COM → GND`. The MAX chain is optional; if you only home, you can leave it unpopulated.
+> **MAX endstops — one pin per axis, no resistors:** each of the 6 switches gets its own GPIO with the pin's **internal** `INPUT_PULLUP` (no external resistors), NC wiring COM→GND, so the firmware knows exactly which axis tripped: X_MAX→GPIO4, Y_MAX→GPIO18, Z_MAX→GPIO17. Closed (not at limit) = LOW; switch open or broken wire = HIGH → fault/stop (fail-safe), same as the MIN switches.
+>
+> **Why the scan trigger sits on GPIO5:** NC endstops idle LOW, so they can't go on strapping pins that must be HIGH at boot. The CAM scan trigger is the opposite — an output (UART2 TX) that **idles HIGH** — so it fits GPIO5 (strapping, must be HIGH at boot) with no boot conflict. That keeps all 6 endstops per-axis **and** the hardware trigger (CAM stays trigger-based, §8). GPIO15 is an equivalent alternative; avoid GPIO12 (must be LOW) and GPIO0/2 for this. The MAX switches are optional; if you only home, leave them unpopulated.
 
 ### 4.3 Pin map — ESP32-CAM (AI-Thinker)
 Camera + PSRAM take most pins. Usable free: GPIO 12, 13, 14, 15, 2, 4, 16. **Strapping caution:** GPIO12 must be LOW at boot, 15 and 2 have constraints.
@@ -144,7 +148,7 @@ Camera + PSRAM take most pins. Usable free: GPIO 12, 13, 14, 15, 2, 4, 16. **Str
 | Function | GPIO | Notes |
 |---|---|---|
 | UART TX → brain (`QR:...`) | 13 | the important direction (CAM→brain) |
-| "Scan now" trigger ← brain | 14 | input; or continuous scan (see §8) |
+| "Scan now" trigger ← brain | 14 | input; receives `SCAN\n` from brain GPIO5 (§8) |
 | (Optional illumination LED) | 4 | onboard white LED — bright, use briefly |
 
 > Do not use GPIO12 as TX (idle = HIGH would block boot). That's why the CAM's TX is on GPIO13. Connect **common GND** between CAM and brain — both are 3.3V logic, so UART direct, no level shifter.
@@ -191,7 +195,7 @@ steps_per_mm = (200 × 16) / 4 = 800 steps/mm
   3. **Y** to its endstop → Y = 0.
 - For each axis: fast approach → on contact stop → back off ~2–5 mm → slow re-approach → set zero. This removes mechanical debounce error.
 - Add software **debounce** (5–10 ms) on the endstop reads.
-- **Homing always references the MIN switches (GPIO 21/22/23).** The MAX switches are a hard end-of-travel limit, daisy-chained in series on GPIO4: read that one pin in the motion loop and immediately stop/fault if it trips — a backup to the soft limits, not a homing reference (it does not tell you which axis tripped).
+- **Homing always references the MIN switches (GPIO 21/22/23).** The MAX switches (GPIO 4/18/17, one per axis) are hard end-of-travel limits: read them in the motion loop and immediately stop/fault if one trips — a backup to the soft limits, not a homing reference. Per-axis pins mean the fault tells you exactly which axis over-traveled.
 - Define **soft limits** (software limits in mm) per axis, so you don't force the end of travel even before the MAX switch is hit.
 
 ### 5.4 Step-generation library
@@ -299,13 +303,14 @@ QR:CJ0012;DX:+2.3;DY:-1.1;TH:1.5\n   // code + pixel-derived offset in mm + rota
 NOQR\n                   // (optional) no code in frame
 ```
 The brain parses the `DX/DY/TH` fields if present and uses them for the CORRECT state; if they're absent it just sorts by the code. The CAM does the pixel→mm conversion (it knows `mm_per_px` and the hand-eye offset), so the brain receives ready-to-use millimeters.
-**brain → CAM (control, optional on UART2 TX / GPIO14):**
+
+**brain → CAM (control, UART2 TX / GPIO5):**
 ```
 SCAN\n           // trigger one capture + decode
 ```
 
 Two operating modes — pick one:
-- **Trigger-based (recommended):** the CAM waits; on `SCAN\n` it captures, decodes, and replies `QR:...` or `NOQR`. Deterministic, synchronized with the state machine.
+- **Trigger-based (recommended):** the CAM waits; on `SCAN\n` (brain GPIO5 → CAM GPIO14) it captures, decodes, and replies `QR:...` or `NOQR`. Deterministic, synchronized with the state machine.
 - **Free-running:** the CAM scans continuously and sends `QR:...` whenever it sees a code. Simpler, but the brain must ignore codes when not in the `AT_SCAN` state.
 
 Parameters: **115200 baud**, 8N1. Both boards are 3.3V → direct TX↔RX connection, **common GND**. If you want isolation, add a 1k series resistor on the line.
@@ -317,7 +322,7 @@ Parameters: **115200 baud**, 8N1. Both boards are 3.3V → direct TX↔RX connec
 Order chosen for this build: **design the schematic first, then de-risk the camera early with a standalone QR test, then build the machine.** Tackling the riskiest unknown (QR reading) before investing in mechanics means you find out early whether the ESP32-CAM is good enough or whether you need a fallback reader (§2.3).
 
 **Phase 0 — EasyEDA schematic (design first)**
-- Draw the full schematic per pin map §4: the 3 A4988s, 12V distribution + fuse, the two bucks, ESP32-CAM, the brain, the 6 endstops (3 MIN one-per-pin + 3 MAX in series on GPIO4), SG90, and the protection capacitors (100µF on each VMOT, 470µF on the CAM).
+- Draw the full schematic per pin map §4: the 3 A4988s, 12V distribution + fuse, the two bucks, ESP32-CAM, the brain, the 6 endstops (MIN on 21/22/23, MAX on 4/18/17, one pin each), SG90, and the protection capacitors (100µF on each VMOT, 470µF on the CAM).
 - Mark the common-ground net explicitly and the CAM TX = GPIO13 choice.
 - This freezes the pin assignments that both firmwares depend on.
 
@@ -334,7 +339,7 @@ Order chosen for this build: **design the schematic first, then de-risk the came
 **Phase 3 — Mechanics**
 - Mount the 3 actuators orthogonally (Y base → X bridge → Z vertical).
 - Mount the gripper (GrabCAD) + SG90 + ESP32-CAM holder on the Z carriage.
-- Install the endstops: one MIN/home switch at the "home" end of each axis, plus one MAX switch at the far end of each axis (6 total).
+- Install the endstops: one MIN/home switch at the "home" end of each axis (GPIO 21/22/23) plus one MAX switch at the far end of each axis (GPIO 4/18/17) — 6 total, one pin each.
 - Route the cabling through the drag chain to the moving carriage.
 
 **Phase 4 — Power + one-axis electronics**
@@ -356,7 +361,7 @@ Order chosen for this build: **design the schematic first, then de-risk the came
 - With the CAM now on the machine at its fixed height, calibrate `mm_per_px` and the hand-eye offset `cam_offset_x/y` (§6.4), so the Phase 1 vision now outputs usable millimeters.
 
 **Phase 8 — Serial link CAM ↔ brain (full protocol)**
-- Wire CAM TX (13) → brain Serial2 RX (16), common GND. Optional trigger brain→CAM.
+- Wire CAM TX (13) → brain Serial2 RX (16) and brain Serial2 TX (5) → CAM trigger (14), common GND.
 - Implement §8 fully: brain sends `SCAN`, CAM replies `QR:…;DX:…;DY:…;TH:…` or `NOQR`. Confirm clean, uncorrupted lines.
 
 **Phase 9 — Integration: full state machine**
@@ -404,7 +409,7 @@ Order chosen for this build: **design the schematic first, then de-risk the came
 
 1. **ESP32-CAM code** — capture + QR decode + serial protocol (§8).
 2. **Brain ESP32 code (WROOM-32D)** — FastAccelStepper, homing, state machine (§7), SG90, QR parsing, sorting logic (§6).
-3. **EasyEDA schematic** — per pin map §4: the 3 A4988s, 12V distribution, the bucks, ESP32-CAM, the brain, the 6 endstops (3 MIN + 3 MAX in series on GPIO4), SG90, the protection capacitors.
+3. **EasyEDA schematic** — per pin map §4: the 3 A4988s, 12V distribution, the bucks, ESP32-CAM, the brain, the 6 endstops (MIN on 21/22/23, MAX on 4/18/17), SG90, the protection capacitors.
 
 Recommended to do the EasyEDA schematic + the brain code in parallel, since the §4 pin map ties both together.
 
@@ -415,7 +420,7 @@ Recommended to do the EasyEDA schematic + the brain code in parallel, since the 
 This is the granular, do-this-then-that checklist, in the chosen order (schematic → camera test → build). Each step is small and verifiable; don't move on until the "✔ verify" passes. Stages map to §9.
 
 ### Stage 0 — EasyEDA schematic (design first)
-1. Create the EasyEDA project; place the brain (WROOM-32D), ESP32-CAM, 3× A4988, 2 bucks, 12V input + fuse, 6 endstops (3 MIN one-per-pin + 3 MAX daisy-chained in series on GPIO4), SG90. 
+1. Create the EasyEDA project; place the brain (WROOM-32D), ESP32-CAM, 3× A4988, 2 bucks, 12V input + fuse, 6 endstops (MIN on 21/22/23, MAX on 4/18/17, one pin each), SG90. 
 2. Wire per pin map §4.2/§4.3; add the protection caps (100µF per VMOT, 470µF on CAM). ✔ verify: every pin in §4 has a net, no pin double-assigned.
 3. Draw the **common-ground** net across PSU, both bucks, both ESP32s; set CAM TX = GPIO13. ✔ verify: one GND net, CAM not using GPIO12 for TX.
 4. Run the EasyEDA DRC (design rule check). ✔ verify: no unconnected/conflicting nets. Export the schematic PDF.
@@ -458,7 +463,7 @@ This is the granular, do-this-then-that checklist, in the chosen order (schemati
 31. Calibrate `steps_per_mm`: command 100 mm, measure, correct, repeat to <0.2 mm error. ✔ verify: 100 mm = 100 mm.
 32. Extend homing + calibration to all 3 axes; order **Z → X → Y**. ✔ verify: full home, no collision.
 33. Add **soft limits** per axis. ✔ verify: an out-of-range move is refused.
-33b. Read the MAX limit chain (GPIO4, `INPUT_PULLUP`) in the motion loop; trip → immediate stop/fault. ✔ verify: pressing any one of the 3 series MAX switches halts motion.
+33b. Read the 3 MAX limit switches (GPIO 4/18/17, `INPUT_PULLUP`) in the motion loop; trip → immediate stop/fault. ✔ verify: pressing each MAX switch halts motion and reports the correct axis.
 
 ### Stage 6 — Gripper + taught positions
 34. Drive SG90 on LEDC (50 Hz); find open/close pulse widths. ✔ verify: clean open/close, no buzzing at rest.
@@ -471,9 +476,9 @@ This is the granular, do-this-then-that checklist, in the chosen order (schemati
 39. Calibrate hand-eye offset `cam_offset_x/y`: center a box under the gripper, read residual pixel offset, store it. ✔ verify: a centered box reports ~0,0 mm.
 
 ### Stage 8 — Serial link CAM ↔ brain (full protocol)
-40. Wire CAM TX (13) → brain Serial2 RX (16); common GND. Optional: brain TX (17) → CAM trigger (14).
+40. Wire CAM TX (13) → brain Serial2 RX (16) and brain Serial2 TX (5) → CAM trigger (14); common GND.
 41. Implement §8; start free-running. ✔ verify: brain prints complete, uncorrupted lines.
-42. Switch to trigger mode: brain sends `SCAN`, CAM replies `QR:…;DX:…;DY:…;TH:…` or `NOQR`. ✔ verify: one clean request/response per trigger.
+42. Switch to trigger mode: brain sends `SCAN` on GPIO5, CAM replies `QR:…;DX:…;DY:…;TH:…` or `NOQR`. ✔ verify: one clean request/response per trigger.
 
 ### Stage 9 — Integration: full state machine
 43. Wire the §7 flow: HOME → PICK_POS → SCAN → CORRECT (apply dx,dy) → grab → DECIDE_TARGET → PLACE → repeat.
