@@ -133,8 +133,9 @@ void moveRelBlocking(int i, float mm, float speed_mm_per_s) {
 }
 
 // Absolute blocking move to mm, clamped to soft limits, stops if the endstop in
-// the travel direction trips on the way.
-void gotoBlockingMM(int i, float target_mm) {
+// the travel direction trips on the way. Returns true if it reached the target,
+// false if a limit switch cut the move short (-> e.g. calibration is invalid).
+bool gotoBlockingMM(int i, float target_mm) {
   Axis &a = AXES[i];
   if (soft_max_mm[i] > 0) target_mm = constrain(target_mm, 0.0f, soft_max_mm[i]);
   long target = mmToSteps(target_mm);
@@ -149,11 +150,12 @@ void gotoBlockingMM(int i, float target_mm) {
         a.s->forceStop();
         Serial.printf("[!] %s endstop hit during move -> stopped at %.2f mm\n",
                       a.name, stepsToMm(a.s->getCurrentPosition()));
-        break;
+        return false;
       }
     } else trip = 0;
     delay(1);
   }
+  return true;
 }
 
 // ── Homing ──────────────────────────────────────────────────────────────────
@@ -253,7 +255,11 @@ void handleLine(String s) {
       float mm = arg.substring(1).toFloat();
       if (ai < 0 || mm == 0) { Serial.println(F("[C] usage: CX100, then type the measured mm")); break; }
       lastCalMm = fabs(mm);
-      gotoBlockingMM(ai, stepsToMm(AXES[ai].s->getCurrentPosition()) + mm);
+      if (!gotoBlockingMM(ai, stepsToMm(AXES[ai].s->getCurrentPosition()) + mm)) {
+        Serial.println(F("[C] hit a limit before finishing -> measurement INVALID."));
+        Serial.println(F("    Jog away from the limit (e.g. JX-50) to mid-travel and retry."));
+        break;
+      }
       awaitingCalMeasure = true;
       Serial.println(F("[C] measure the real travel with calipers, then type just the number (e.g. 98.7)"));
       break;
