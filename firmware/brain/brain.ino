@@ -217,6 +217,81 @@ bool homeAll() {
   return true;
 }
 
+// ── Gripper (SG90 servo on LEDC, GPIO19) ────────────────────────────────────
+// Wiring: SG90 signal -> GPIO19, SG90 V+ -> 5V buck (NOT the ESP32 3V3!), GND common.
+// TUNE grip_open_deg / grip_close_deg with the E<angle> command, then paste here.
+#define SERVO_PIN  19
+#define SERVO_CH   4          // LEDC channel (steppers use RMT, so this is free)
+#define SERVO_FREQ 50         // 50 Hz = 20 ms period
+#define SERVO_RES  16         // 16-bit duty
+
+int grip_open_deg  = 3;       // jaws open / release the box
+int grip_close_deg = 47;      // jaws closed / grip the box (50 stalls/buzzes)
+
+uint32_t angleToDuty(int deg) {
+  deg = constrain(deg, 0, 180);
+  float us = 500.0f + (deg / 180.0f) * 1900.0f;          // SG90 ~0.5..2.4 ms
+  return (uint32_t)lroundf(us / 20000.0f * ((1UL << SERVO_RES) - 1));
+}
+void servoWrite(int deg) { ledcWrite(SERVO_CH, angleToDuty(deg)); }
+void gripOpen()  { servoWrite(grip_open_deg);  Serial.println(F("[grip] OPEN")); }
+void gripClose() { servoWrite(grip_close_deg); Serial.println(F("[grip] CLOSED")); }
+
+// ── Taught positions (hardcoded; teach with T, dump with D, paste back here) ─
+struct Pos { float x, y, z; };          // mm. Z is negative-down (0 = top / safe).
+Pos PICK_POS = { 0, 0, 0 };             // TEACH: jog there, TP
+Pos SCAN_POS = { 0, 0, 0 };             // TEACH: TS
+Pos SHELF[3][3] = {                     // TEACH: T11..T33  (row, col). Col = MS/BV/CJ.
+  { {0,0,0}, {0,0,0}, {0,0,0} },
+  { {0,0,0}, {0,0,0}, {0,0,0} },
+  { {0,0,0}, {0,0,0}, {0,0,0} },
+};
+const char *COL_PREFIX[3] = { "MS", "BV", "CJ" };   // shelf column = QR prefix
+
+bool allHomed() { return homed[0] && homed[1] && homed[2]; }
+
+Pos curPos() {
+  return { stepsToMm(AXES[AX_X].s->getCurrentPosition()),
+           stepsToMm(AXES[AX_Y].s->getCurrentPosition()),
+           stepsToMm(AXES[AX_Z].s->getCurrentPosition()) };
+}
+
+// Resolve a slot token ("P","S","11".."33") to a Pos* and fill its name.
+Pos *resolveSlot(const String &a, char *nameOut) {
+  if (a.length() == 0) return nullptr;
+  char c0 = toupper(a.charAt(0));
+  if (c0 == 'P') { strcpy(nameOut, "PICK"); return &PICK_POS; }
+  if (c0 == 'S') { strcpy(nameOut, "SCAN"); return &SCAN_POS; }
+  if (a.length() >= 2 && isDigit(a.charAt(0)) && isDigit(a.charAt(1))) {
+    int r = a.charAt(0) - '1', c = a.charAt(1) - '1';
+    if (r >= 0 && r < 3 && c >= 0 && c < 3) { sprintf(nameOut, "SHELF[%d][%d]", r, c); return &SHELF[r][c]; }
+  }
+  return nullptr;
+}
+
+// Safe move to a position: raise Z to top (0), move XY, then lower Z (§7).
+void gotoPos(const Pos &p) {
+  gotoBlockingMM(AX_Z, 0);        // raise to safe height FIRST (no shelf collisions)
+  gotoBlockingMM(AX_X, p.x);
+  gotoBlockingMM(AX_Y, p.y);
+  gotoBlockingMM(AX_Z, p.z);      // then lower onto the target
+}
+
+// Print all taught positions as C code, ready to paste back into this file.
+void dumpPositions() {
+  Serial.println(F("---- paste into brain.ino ----"));
+  Serial.printf("Pos PICK_POS = { %.2f, %.2f, %.2f };\n", PICK_POS.x, PICK_POS.y, PICK_POS.z);
+  Serial.printf("Pos SCAN_POS = { %.2f, %.2f, %.2f };\n", SCAN_POS.x, SCAN_POS.y, SCAN_POS.z);
+  Serial.println(F("Pos SHELF[3][3] = {"));
+  for (int r = 0; r < 3; r++) {
+    Serial.print(F("  {"));
+    for (int c = 0; c < 3; c++)
+      Serial.printf(" {%.2f,%.2f,%.2f}%s", SHELF[r][c].x, SHELF[r][c].y, SHELF[r][c].z, c < 2 ? "," : "");
+    Serial.println(F(" },"));
+  }
+  Serial.println(F("};\n------------------------------"));
+}
+
 // ── Console ─────────────────────────────────────────────────────────────────
 void printStatus() {
   Serial.print(F("[P] "));
@@ -232,11 +307,13 @@ void printStatus() {
 
 void printHelp() {
   Serial.println(F(
-    "BRAIN stage A — motion + homing\n"
+    "BRAIN stage B — motion + homing + gripper\n"
     "  H[axis]  home: HA=all(Z->X->Y) / HX / HY / HZ\n"
     "  J<axis><mm>  jog relative  (JX50 / JZ-10)\n"
     "  G<axis><mm>  goto absolute (GX120)\n"
     "  C<axis><mm>  calibrate: jog known dist, then type the MEASURED mm\n"
+    "  O open grip   L close grip   E<deg> set servo angle (tune open/close)\n"
+    "  T<slot> teach here   M<slot> move there   D dump positions  (slot: P S 11..33)\n"
     "  V<mm/s> speed   A<mm/s2> accel   S stop   P status   ?  help\n"
     "  P legend: H=homed  m=MIN tripped  M=MAX tripped"));
 }
@@ -284,6 +361,40 @@ void handleLine(String s) {
       Serial.println(F("[C] measure the real travel with calipers, then type just the number (e.g. 98.7)"));
       break;
     }
+    case 'O':
+      gripOpen();
+      break;
+    case 'L':
+      gripClose();
+      break;
+    case 'T': {   // teach: store current position into a slot
+      char name[16];
+      Pos *slot = resolveSlot(arg, name);
+      if (!slot) { Serial.println(F("[T] usage: TP / TS / T11..T33")); break; }
+      if (!allHomed()) { Serial.println(F("[T] home first (HA) so positions are referenced")); break; }
+      *slot = curPos();
+      Serial.printf("[T] %s = {%.2f, %.2f, %.2f}  (use D to dump all for pasting)\n",
+                    name, slot->x, slot->y, slot->z);
+      break;
+    }
+    case 'M': {   // move to a taught slot (safe Z motion)
+      char name[16];
+      Pos *slot = resolveSlot(arg, name);
+      if (!slot) { Serial.println(F("[M] usage: MP / MS / M11..M33")); break; }
+      if (!allHomed()) { Serial.println(F("[M] home first (HA)")); break; }
+      Serial.printf("[M] -> %s {%.2f, %.2f, %.2f}\n", name, slot->x, slot->y, slot->z);
+      gotoPos(*slot);
+      break;
+    }
+    case 'D':
+      dumpPositions();
+      break;
+    case 'E': {
+      int deg = arg.toInt();
+      servoWrite(deg);
+      Serial.printf("[E] servo -> %d deg (tune, then set grip_open_deg/grip_close_deg)\n", deg);
+      break;
+    }
     case 'V':
       speed_mm_s = max(0.1f, arg.toFloat()); applyMotion();
       Serial.printf("[V] speed = %.2f mm/s\n", speed_mm_s);
@@ -325,12 +436,17 @@ void handleLine(String s) {
 void setup() {
   Serial.begin(115200);
   delay(300);
-  Serial.println(F("\n=== BRAIN (stage A: motion + homing) ==="));
+  Serial.println(F("\n=== BRAIN (stage B: motion + homing + gripper) ==="));
 
   for (int i = 0; i < N_AXES; i++) {
     pinMode(AXES[i].minPin, INPUT_PULLUP);
     pinMode(AXES[i].maxPin, INPUT_PULLUP);
   }
+
+  // SG90 gripper on LEDC
+  ledcSetup(SERVO_CH, SERVO_FREQ, SERVO_RES);
+  ledcAttachPin(SERVO_PIN, SERVO_CH);
+  servoWrite(grip_open_deg);          // start opened
 
   engine.init();
   for (int i = 0; i < N_AXES; i++) {
