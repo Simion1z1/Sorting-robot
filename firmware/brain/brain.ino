@@ -57,16 +57,28 @@ float steps_per_mm = 50.0f;        // FULL STEP, 4mm lead. SET after C-calibrati
 float speed_mm_s   = 20.0f;
 float accel_mm_s2  = 600.0f;
 
-// Soft limits (usable travel per axis, mm). 0 = unknown/disabled -> only the
-// hardware endstops protect that axis. Fill in after measuring real travel.
-float soft_max_mm[N_AXES] = { 0, 0, 0 };   // {X, Y, Z}
+// Soft limits per axis [min, max] in mm (after homing). 0,0 = disabled (only the
+// hardware endstops protect that axis). Mind the coordinate sense per axis:
+//   X,Y home at MIN -> 0 at home, travel is POSITIVE   -> set max > 0
+//   Z   homes at MAX -> 0 at the TOP, DOWN is NEGATIVE  -> set min < 0 (e.g. -120), max = 0
+//                              X      Y       Z      (measured travel: X197.82 Y168.28 Z-120, minus ~3mm margin)
+float soft_min_mm[N_AXES] = {    0,     0,   -117 };   // {X, Y, Z}
+float soft_max_mm[N_AXES] = {  194,   165,      0 };   // {X, Y, Z}
 
 // Homing parameters
 float HOME_FAST_MM_S = 15.0f;      // fast approach
 float HOME_SLOW_MM_S = 3.0f;       // slow re-approach (removes bounce error)
 float HOME_BACKOFF_MM = 4.0f;      // pull-off between the two approaches
-const int8_t HOME_DIR = -1;        // toward MIN = negative (runBackward). Flip DIR
-                                   // wiring if an axis runs the wrong way.
+// Homing is configured by TWO independent per-axis knobs:
+//   HOME_USES_MAX[i] : which physical switch is the home reference
+//                      (true = MAX pin, false = MIN pin)
+//   HOME_DIR[i]      : which way the MOTOR turns to reach it
+//                      (+1 = runForward, -1 = runBackward)
+// Set HOME_USES_MAX to the switch that sits at the home end. Then if the motor
+// drives AWAY from that switch during homing, just flip the sign of HOME_DIR[i].
+// Z homes UP (away from the shelves in front); X,Y home toward their MIN end.
+const bool   HOME_USES_MAX[N_AXES] = { false, false, true };  // X->MIN, Y->MIN, Z->MAX
+const int8_t HOME_DIR[N_AXES]      = { -1,    -1,    +1   };   // X->MIN, Y->MIN, Z->MAX (Z: +1 = AWAY from motor = toward MAX)
 const uint32_t HOME_TIMEOUT_MS = 30000;
 
 bool homed[N_AXES] = { false, false, false };
@@ -103,18 +115,17 @@ void stopAll() {
 }
 
 // ── Blocking single-axis motion with endstop safety ─────────────────────────
-// Runs an axis continuously toward MIN(dir<0)/MAX(dir>0) until that endstop
-// trips (debounced) or timeout. Returns true if the switch was hit.
-bool runUntilEndstop(int i, int8_t dir, float speed_mm_per_s, uint32_t timeoutMs) {
+// Runs an axis continuously in motor direction `dir` (+1 fwd / -1 back) until
+// `watchPin` trips (debounced) or timeout. Returns true if the switch was hit.
+bool runUntilEndstop(int i, int8_t dir, uint8_t watchPin, float speed_mm_per_s, uint32_t timeoutMs) {
   Axis &a = AXES[i];
-  uint8_t pin = (dir > 0) ? a.maxPin : a.minPin;
   a.s->setSpeedInHz((uint32_t)lroundf(speed_mm_per_s * steps_per_mm));
   if (dir > 0) a.s->runForward(); else a.s->runBackward();
 
   uint32_t t0 = millis();
   uint8_t trip = 0;
   while (true) {
-    if (endstopTripped(pin)) {
+    if (endstopTripped(watchPin)) {
       if (++trip >= DEBOUNCE_SAMPLES) { a.s->forceStop(); return true; }
     } else {
       trip = 0;
@@ -137,10 +148,15 @@ void moveRelBlocking(int i, float mm, float speed_mm_per_s) {
 // false if a limit switch cut the move short (-> e.g. calibration is invalid).
 bool gotoBlockingMM(int i, float target_mm) {
   Axis &a = AXES[i];
-  if (soft_max_mm[i] > 0) target_mm = constrain(target_mm, 0.0f, soft_max_mm[i]);
+  if (soft_min_mm[i] != 0 || soft_max_mm[i] != 0)
+    target_mm = constrain(target_mm, soft_min_mm[i], soft_max_mm[i]);
   long target = mmToSteps(target_mm);
   int8_t dir = (target >= a.s->getCurrentPosition()) ? +1 : -1;
-  uint8_t ahead = (dir > 0) ? a.maxPin : a.minPin;
+  // which switch lies in the +position direction depends on where the axis homed:
+  // homed at MIN -> +pos goes toward MAX ;  homed at MAX -> +pos goes toward MIN.
+  uint8_t posPin = HOME_USES_MAX[i] ? a.minPin : a.maxPin;
+  uint8_t negPin = HOME_USES_MAX[i] ? a.maxPin : a.minPin;
+  uint8_t ahead  = (dir > 0) ? posPin : negPin;
 
   a.s->moveTo(target);
   uint8_t trip = 0;
@@ -161,20 +177,24 @@ bool gotoBlockingMM(int i, float target_mm) {
 // ── Homing ──────────────────────────────────────────────────────────────────
 bool homeAxis(int i) {
   Axis &a = AXES[i];
-  Serial.printf("[home] %s ...\n", a.name);
+  int8_t dir = HOME_DIR[i];
+  uint8_t homePin = HOME_USES_MAX[i] ? a.maxPin : a.minPin;   // which switch is "home"
+  const char *end = HOME_USES_MAX[i] ? "MAX" : "MIN";
+  Serial.printf("[home] %s (switch %s, motor dir %+d) ...\n", a.name, end, dir);
 
-  // if already sitting on the MIN switch, step off it first
-  if (endstopTripped(a.minPin)) moveRelBlocking(i, -HOME_DIR * HOME_BACKOFF_MM, HOME_SLOW_MM_S);
+  // if already sitting on the home switch, step off it first
+  if (endstopTripped(homePin)) moveRelBlocking(i, -dir * HOME_BACKOFF_MM, HOME_SLOW_MM_S);
 
-  // 1) fast approach toward MIN
-  if (!runUntilEndstop(i, HOME_DIR, HOME_FAST_MM_S, HOME_TIMEOUT_MS)) {
-    Serial.printf("[home] %s FAILED (no MIN switch within timeout)\n", a.name);
+  // 1) fast approach toward the home switch
+  if (!runUntilEndstop(i, dir, homePin, HOME_FAST_MM_S, HOME_TIMEOUT_MS)) {
+    Serial.printf("[home] %s FAILED (no %s switch within timeout -> flip HOME_DIR[%s])\n",
+                  a.name, end, a.name);
     return false;
   }
   // 2) back off the switch
-  moveRelBlocking(i, -HOME_DIR * HOME_BACKOFF_MM, HOME_SLOW_MM_S);
+  moveRelBlocking(i, -dir * HOME_BACKOFF_MM, HOME_SLOW_MM_S);
   // 3) slow re-approach
-  if (!runUntilEndstop(i, HOME_DIR, HOME_SLOW_MM_S, HOME_TIMEOUT_MS)) {
+  if (!runUntilEndstop(i, dir, homePin, HOME_SLOW_MM_S, HOME_TIMEOUT_MS)) {
     Serial.printf("[home] %s FAILED on slow re-approach\n", a.name);
     return false;
   }
