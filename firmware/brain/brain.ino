@@ -52,6 +52,10 @@ Axis AXES[] = {
 const int N_AXES = sizeof(AXES) / sizeof(AXES[0]);
 #define ENABLE_PIN 13              // shared A4988 enable, ACTIVE LOW
 
+// A taught XYZ position in mm (Z is negative-down, 0 = top/safe). Defined up here
+// so the .ino auto-prototype generator sees the type before any function signature.
+struct Pos { float x, y, z; };
+
 // ── Calibration & motion (shared steps_per_mm, per decision) ────────────────
 float steps_per_mm = 50.0f;        // FULL STEP, 4mm lead. SET after C-calibration!
 float speed_mm_s   = 20.0f;
@@ -63,7 +67,7 @@ float accel_mm_s2  = 600.0f;
 //   Z   homes at MAX -> 0 at the TOP, DOWN is NEGATIVE  -> set min < 0 (e.g. -120), max = 0
 //                              X      Y       Z      (measured travel: X197.82 Y168.28 Z-120, minus ~3mm margin)
 float soft_min_mm[N_AXES] = {    0,     0,   -117 };   // {X, Y, Z}
-float soft_max_mm[N_AXES] = {  194,   165,      0 };   // {X, Y, Z}
+float soft_max_mm[N_AXES] = {  194,   170,      0 };   // {X, Y, Z}
 
 // Homing parameters
 float HOME_FAST_MM_S = 15.0f;      // fast approach
@@ -152,11 +156,9 @@ bool gotoBlockingMM(int i, float target_mm) {
     target_mm = constrain(target_mm, soft_min_mm[i], soft_max_mm[i]);
   long target = mmToSteps(target_mm);
   int8_t dir = (target >= a.s->getCurrentPosition()) ? +1 : -1;
-  // which switch lies in the +position direction depends on where the axis homed:
-  // homed at MIN -> +pos goes toward MAX ;  homed at MAX -> +pos goes toward MIN.
-  uint8_t posPin = HOME_USES_MAX[i] ? a.minPin : a.maxPin;
-  uint8_t negPin = HOME_USES_MAX[i] ? a.maxPin : a.minPin;
-  uint8_t ahead  = (dir > 0) ? posPin : negPin;
+  // For all axes here, increasing position = runForward = physically toward MAX,
+  // decreasing = toward MIN. So the switch "ahead" follows dir directly.
+  uint8_t ahead = (dir > 0) ? a.maxPin : a.minPin;
 
   a.s->moveTo(target);
   uint8_t trip = 0;
@@ -237,16 +239,35 @@ void servoWrite(int deg) { ledcWrite(SERVO_CH, angleToDuty(deg)); }
 void gripOpen()  { servoWrite(grip_open_deg);  Serial.println(F("[grip] OPEN")); }
 void gripClose() { servoWrite(grip_close_deg); Serial.println(F("[grip] CLOSED")); }
 
-// ── Taught positions (hardcoded; teach with T, dump with D, paste back here) ─
-struct Pos { float x, y, z; };          // mm. Z is negative-down (0 = top / safe).
-Pos PICK_POS = { 0, 0, 0 };             // TEACH: jog there, TP
-Pos SCAN_POS = { 0, 0, 0 };             // TEACH: TS
-Pos SHELF[3][3] = {                     // TEACH: T11..T33  (row, col). Col = MS/BV/CJ.
-  { {0,0,0}, {0,0,0}, {0,0,0} },
-  { {0,0,0}, {0,0,0}, {0,0,0} },
-  { {0,0,0}, {0,0,0}, {0,0,0} },
+// ── Shelf grid 3 rows x 2 cols + code routing (per "Box Structure.txt") ──────
+//   Row1:  MS0012  MS0011
+//   Row2:  CJ0011  CJ0012
+//   Row3:  EB0011  [BOXES = pickup/feed zone]
+// Positions hardcoded; teach with T11..T32 / TS, dump with D, paste back here.
+Pos SHELF[3][2] = {                     // [row][col], mm. Z negative-down (0=top).
+  { {174.94, 9.00, -110.54}, {6.92, 9.00, -110.54} },      // Row1: MS0012  MS0011
+  { {164.94, 109.00, -110.36}, {6.92, 104.00, -110.54} },  // Row2: CJ0011  CJ0012
+  { {170.00, 164.94, -110.54}, {-0.06, 164.94, -110.54} }, // Row3: EB0011  BOXES
 };
-const char *COL_PREFIX[3] = { "MS", "BV", "CJ" };   // shelf column = QR prefix
+Pos SCAN_POS = { -0.06, 164.94, -19.94 };   // where the camera reads the QR
+
+#define PICK_ROW 2
+#define PICK_COL 1                      // Row3 Col2 = "Boxes" feed zone
+
+// Safe travel height for Z. NOT 0: Z=0 sits exactly on the MAX/home switch, so
+// going there trips it. A few mm below clears the switch but still clears shelves.
+#define Z_SAFE_MM -5.0f
+
+// Exact QR code -> destination cell (fixed mapping, CLAUDE.md §6.2 strategy A).
+struct CodeCell { const char *code; uint8_t row, col; };
+const CodeCell CODE_MAP[] = {
+  { "MS0012", 0, 0 },   // Row1 Col1
+  { "MS0011", 0, 1 },   // Row1 Col2
+  { "CJ0011", 1, 0 },   // Row2 Col1
+  { "CJ0012", 1, 1 },   // Row2 Col2
+  { "EB0011", 2, 0 },   // Row3 Col1
+};
+const int N_CODES = sizeof(CODE_MAP) / sizeof(CODE_MAP[0]);
 
 bool allHomed() { return homed[0] && homed[1] && homed[2]; }
 
@@ -256,37 +277,72 @@ Pos curPos() {
            stepsToMm(AXES[AX_Z].s->getCurrentPosition()) };
 }
 
-// Resolve a slot token ("P","S","11".."33") to a Pos* and fill its name.
+// Resolve a teach slot token ("S","11".."32") to a Pos* and fill its name.
 Pos *resolveSlot(const String &a, char *nameOut) {
   if (a.length() == 0) return nullptr;
-  char c0 = toupper(a.charAt(0));
-  if (c0 == 'P') { strcpy(nameOut, "PICK"); return &PICK_POS; }
-  if (c0 == 'S') { strcpy(nameOut, "SCAN"); return &SCAN_POS; }
+  if (toupper(a.charAt(0)) == 'S') { strcpy(nameOut, "SCAN"); return &SCAN_POS; }
   if (a.length() >= 2 && isDigit(a.charAt(0)) && isDigit(a.charAt(1))) {
     int r = a.charAt(0) - '1', c = a.charAt(1) - '1';
-    if (r >= 0 && r < 3 && c >= 0 && c < 3) { sprintf(nameOut, "SHELF[%d][%d]", r, c); return &SHELF[r][c]; }
+    if (r >= 0 && r < 3 && c >= 0 && c < 2) {
+      sprintf(nameOut, "SHELF[%d][%d]%s", r, c, (r == PICK_ROW && c == PICK_COL) ? "=BOXES" : "");
+      return &SHELF[r][c];
+    }
   }
   return nullptr;
 }
 
-// Safe move to a position: raise Z to top (0), move XY, then lower Z (§7).
+// Scanned QR code -> destination cell position (nullptr if the code is unknown).
+Pos *routeForCode(const char *code) {
+  for (int i = 0; i < N_CODES; i++)
+    if (strcasecmp(code, CODE_MAP[i].code) == 0) return &SHELF[CODE_MAP[i].row][CODE_MAP[i].col];
+  return nullptr;
+}
+
+// Safety: before any X/Y move, lift Z to the top (0) so the gripper clears the
+// shelves (CLAUDE.md §7). Only acts when homed and Z is currently below the top.
+void raiseZBeforeXY(int ai) {
+  if (ai != AX_X && ai != AX_Y) return;
+  if (!allHomed()) return;
+  if (stepsToMm(AXES[AX_Z].s->getCurrentPosition()) < Z_SAFE_MM - 0.1f) {
+    Serial.println(F("[safe] Z -> safe top before XY move"));
+    gotoBlockingMM(AX_Z, Z_SAFE_MM);
+  }
+}
+
+// Safe move to a position: raise Z to safe top, move XY, then lower Z (§7).
 void gotoPos(const Pos &p) {
-  gotoBlockingMM(AX_Z, 0);        // raise to safe height FIRST (no shelf collisions)
+  gotoBlockingMM(AX_Z, Z_SAFE_MM);  // raise to safe height FIRST (no shelf collisions)
   gotoBlockingMM(AX_X, p.x);
   gotoBlockingMM(AX_Y, p.y);
-  gotoBlockingMM(AX_Z, p.z);      // then lower onto the target
+  gotoBlockingMM(AX_Z, p.z);        // then lower onto the target
+}
+
+// Pick: open, descend onto the box, grip, lift to safe top.
+void doPick(const Pos &p) { gripOpen(); gotoPos(p); gripClose(); delay(400); gotoBlockingMM(AX_Z, Z_SAFE_MM); }
+// Place: descend onto the cell, release, lift to safe top.
+void doPlace(const Pos &p) { gotoPos(p); gripOpen(); delay(400); gotoBlockingMM(AX_Z, Z_SAFE_MM); }
+
+// One full sort cycle for a known code: pick from BOXES -> place at its cell.
+// (Camera/scan arrives in stage C; here the code is provided directly.)
+bool sortCycle(const char *code) {
+  Pos *dest = routeForCode(code);
+  if (!dest) { Serial.printf("[sort] unknown code '%s' -> reject (no cell)\n", code); return false; }
+  Serial.printf("[sort] pick BOXES -> place %s\n", code);
+  doPick(SHELF[PICK_ROW][PICK_COL]);
+  doPlace(*dest);
+  Serial.println(F("[sort] done"));
+  return true;
 }
 
 // Print all taught positions as C code, ready to paste back into this file.
 void dumpPositions() {
   Serial.println(F("---- paste into brain.ino ----"));
-  Serial.printf("Pos PICK_POS = { %.2f, %.2f, %.2f };\n", PICK_POS.x, PICK_POS.y, PICK_POS.z);
   Serial.printf("Pos SCAN_POS = { %.2f, %.2f, %.2f };\n", SCAN_POS.x, SCAN_POS.y, SCAN_POS.z);
-  Serial.println(F("Pos SHELF[3][3] = {"));
+  Serial.println(F("Pos SHELF[3][2] = {"));
   for (int r = 0; r < 3; r++) {
     Serial.print(F("  {"));
-    for (int c = 0; c < 3; c++)
-      Serial.printf(" {%.2f,%.2f,%.2f}%s", SHELF[r][c].x, SHELF[r][c].y, SHELF[r][c].z, c < 2 ? "," : "");
+    for (int c = 0; c < 2; c++)
+      Serial.printf(" {%.2f,%.2f,%.2f}%s", SHELF[r][c].x, SHELF[r][c].y, SHELF[r][c].z, c < 1 ? "," : "");
     Serial.println(F(" },"));
   }
   Serial.println(F("};\n------------------------------"));
@@ -313,7 +369,8 @@ void printHelp() {
     "  G<axis><mm>  goto absolute (GX120)\n"
     "  C<axis><mm>  calibrate: jog known dist, then type the MEASURED mm\n"
     "  O open grip   L close grip   E<deg> set servo angle (tune open/close)\n"
-    "  T<slot> teach here   M<slot> move there   D dump positions  (slot: P S 11..33)\n"
+    "  T<slot> teach here   M<slot> move there   D dump  (slot: S 11..32; 32=Boxes)\n"
+    "  B<code> run one sort cycle: pick Boxes -> place by code (e.g. BMS0012)\n"
     "  V<mm/s> speed   A<mm/s2> accel   S stop   P status   ?  help\n"
     "  P legend: H=homed  m=MIN tripped  M=MAX tripped"));
 }
@@ -336,6 +393,7 @@ void handleLine(String s) {
       int ai = axisIndex(arg.charAt(0));
       if (ai < 0) { Serial.println(F("[J] usage: JX50 / JZ-10")); break; }
       float mm = arg.substring(1).toFloat();
+      raiseZBeforeXY(ai);
       gotoBlockingMM(ai, stepsToMm(AXES[ai].s->getCurrentPosition()) + mm);
       Serial.printf("[J] %s now %.2f mm\n", AXES[ai].name, stepsToMm(AXES[ai].s->getCurrentPosition()));
       break;
@@ -343,6 +401,7 @@ void handleLine(String s) {
     case 'G': {
       int ai = axisIndex(arg.charAt(0));
       if (ai < 0) { Serial.println(F("[G] usage: GX120")); break; }
+      raiseZBeforeXY(ai);
       gotoBlockingMM(ai, arg.substring(1).toFloat());
       Serial.printf("[G] %s now %.2f mm\n", AXES[ai].name, stepsToMm(AXES[ai].s->getCurrentPosition()));
       break;
@@ -368,9 +427,9 @@ void handleLine(String s) {
       gripClose();
       break;
     case 'T': {   // teach: store current position into a slot
-      char name[16];
+      char name[24];
       Pos *slot = resolveSlot(arg, name);
-      if (!slot) { Serial.println(F("[T] usage: TP / TS / T11..T33")); break; }
+      if (!slot) { Serial.println(F("[T] usage: TS / T11..T32 (T32 = Boxes pickup)")); break; }
       if (!allHomed()) { Serial.println(F("[T] home first (HA) so positions are referenced")); break; }
       *slot = curPos();
       Serial.printf("[T] %s = {%.2f, %.2f, %.2f}  (use D to dump all for pasting)\n",
@@ -378,9 +437,9 @@ void handleLine(String s) {
       break;
     }
     case 'M': {   // move to a taught slot (safe Z motion)
-      char name[16];
+      char name[24];
       Pos *slot = resolveSlot(arg, name);
-      if (!slot) { Serial.println(F("[M] usage: MP / MS / M11..M33")); break; }
+      if (!slot) { Serial.println(F("[M] usage: MS / M11..M32")); break; }
       if (!allHomed()) { Serial.println(F("[M] home first (HA)")); break; }
       Serial.printf("[M] -> %s {%.2f, %.2f, %.2f}\n", name, slot->x, slot->y, slot->z);
       gotoPos(*slot);
@@ -389,6 +448,12 @@ void handleLine(String s) {
     case 'D':
       dumpPositions();
       break;
+    case 'B': {   // run one sort cycle for a manually-entered code (camera = stage C)
+      if (!allHomed()) { Serial.println(F("[B] home first (HA)")); break; }
+      if (arg.length() == 0) { Serial.println(F("[B] usage: B<code>  e.g. BMS0012")); break; }
+      sortCycle(arg.c_str());
+      break;
+    }
     case 'E': {
       int deg = arg.toInt();
       servoWrite(deg);
