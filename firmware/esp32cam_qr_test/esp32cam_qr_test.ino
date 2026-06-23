@@ -40,10 +40,10 @@
                                    // true  = wait for "SCAN\n" from the brain, then send once
 #define SEND_COOLDOWN_MS  1500     // don't resend the SAME code faster than this (anti-spam)
 
-#define USE_FLASH_LED     true     // GPIO4 white LED as illumination (DIMMED via PWM below)
+#define USE_FLASH_LED     true     // master enable for the GPIO4 white LED
 #define FLASH_LED_PIN     4
-#define FLASH_BRIGHTNESS  30       // 0-255. Keep LOW: full brightness glares on the QR + draws current
-#define FLASH_LEDC_CH     7        // LEDC channel for the flash (camera uses ch0/timer0 — keep clear)
+#define FLASH_LEVEL       50        // 0-255 STEADY illumination. 0 = off (only blinks on scan); >0 = constant light
+#define FLASH_LEDC_CH     7        // LEDC channel (camera uses ch0/timer0 — keep this one clear)
 #define STATUS_LED_PIN    33       // onboard red LED (active LOW) — blinks on a read
 // ----------------------------------------------------------------------------
 
@@ -97,6 +97,38 @@ void sendOrder(const String &code) {
   Serial.println(msg);
 }
 
+// White GPIO4 LED via PWM: FLASH_LEVEL = steady illumination (0..255), and a blink
+// pulses to full brightness then returns to the steady level.
+#if USE_FLASH_LED
+void flashWrite(uint8_t level) {
+  #if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
+    ledcWrite(FLASH_LED_PIN, level);
+  #else
+    ledcWrite(FLASH_LEDC_CH, level);
+  #endif
+}
+void flashSetup() {
+  #if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
+    ledcAttach(FLASH_LED_PIN, 5000, 8);
+  #else
+    ledcSetup(FLASH_LEDC_CH, 5000, 8);
+    ledcAttachPin(FLASH_LED_PIN, FLASH_LEDC_CH);
+  #endif
+  flashWrite(FLASH_LEVEL);                 // steady level (0 = off)
+}
+void blinkFlash(int times) {
+  for (int i = 0; i < times; i++) {
+    flashWrite(255);                        // pulse to full
+    delay(60);
+    flashWrite(FLASH_LEVEL);                // back to steady level
+    if (i < times - 1) delay(80);
+  }
+}
+#else
+void flashSetup() {}
+void blinkFlash(int) {}
+#endif
+
 void onQrCodeTask(void *pv) {
   struct QRCodeData qrCodeData;
   unsigned long nDecoded = 0, nDetectedBad = 0;   // read-rate stats
@@ -123,7 +155,7 @@ void onQrCodeTask(void *pv) {
         #if USE_TRIGGER
           gArmed = false;                       // one reply per SCAN
         #endif
-          delay(60);
+          blinkFlash(2);                        // white blinks TWICE on a good scan
           digitalWrite(STATUS_LED_PIN, HIGH);   // red OFF
         }
       } else {
@@ -184,15 +216,7 @@ void setup() {
   pinMode(STATUS_LED_PIN, OUTPUT);
   digitalWrite(STATUS_LED_PIN, HIGH);                          // off
 #if USE_FLASH_LED
-  // Dimmed steady illumination via PWM (full brightness glares on the QR).
-  #if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
-    ledcAttach(FLASH_LED_PIN, 5000, 8);
-    ledcWrite(FLASH_LED_PIN, FLASH_BRIGHTNESS);
-  #else
-    ledcSetup(FLASH_LEDC_CH, 5000, 8);
-    ledcAttachPin(FLASH_LED_PIN, FLASH_LEDC_CH);
-    ledcWrite(FLASH_LEDC_CH, FLASH_BRIGHTNESS);
-  #endif
+  flashSetup();                           // PWM on GPIO4; steady = FLASH_LEVEL (0 = off)
 #endif
 
   Serial.println();
@@ -208,6 +232,8 @@ void setup() {
   initEspNow();                                                // wireless link to the brain
 
   xTaskCreate(onQrCodeTask, "onQrCode", 4096, NULL, 4, NULL);
+
+  blinkFlash(2);                                               // boot OK -> two blinks
 }
 
 void loop() {
