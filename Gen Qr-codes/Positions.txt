@@ -1,0 +1,27 @@
+MS0012 - T11
+[P] X=174.94mm[H--] Y=9.00mm[H--] Z=-110.54mm[H--] | V=10.0 A=600.0 | steps/mm=50.000
+[T] SHELF[0][0] = {174.94, 9.00, -110.54}  (use D to dump all for pasting)
+
+MS0011 - T12
+[P] X=6.92mm[H--] Y=9.00mm[H--] Z=-110.54mm[H--] | V=10.0 A=600.0 | steps/mm=50.000
+[T] SHELF[0][1] = {6.92, 9.00, -110.54}  (use D to dump all for pasting)
+
+CJ0011 - T21
+[P] X=164.94mm[H--] Y=109.00mm[H--] Z=-110.36mm[H--] | V=10.0 A=600.0 | steps/mm=50.000
+[T] SHELF[1][0] = {164.94, 109.00, -110.36}  (use D to dump all for pasting)
+
+CJ0012 - T22
+[P] X=6.92mm[H--] Y=104.00mm[H--] Z=-110.54mm[H--] | V=10.0 A=600.0 | steps/mm=50.000
+[T] SHELF[1][1] = {6.92, 104.00, -110.54}  (use D to dump all for pasting)
+
+EB0011 - T31
+[P] X=170.00mm[H--] Y=164.94mm[H--] Z=-110.54mm[H--] | V=20.0 A=600.0 | steps/mm=50.000
+[T] SHELF[2][0] = {170.00, 164.94, -110.54}  (use D to dump all for pasting)
+
+T32
+[P] X=-0.06mm[Hm-] Y=164.94mm[H--] Z=-110.54mm[H--] | V=20.0 A=600.0 | steps/mm=50.000
+[T] SHELF[2][1]=BOXES = {-0.06, 164.94, -110.54}  (use D to dump all for pasting)
+
+SCAN - TS
+[P] X=-0.06mm[Hm-] Y=164.94mm[H--] Z=-19.94mm[H--] | V=20.0 A=600.0 | steps/mm=50.000
+[T] SCAN = {-0.06, 164.94, -19.94}  (use D to dump all for pasting)

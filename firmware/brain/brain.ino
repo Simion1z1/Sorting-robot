@@ -56,6 +56,14 @@ const int N_AXES = sizeof(AXES) / sizeof(AXES[0]);
 // so the .ino auto-prototype generator sees the type before any function signature.
 struct Pos { float x, y, z; };
 
+// ── ESP32-CAM link (UART2, §8) ──────────────────────────────────────────────
+//   CAM TX(GPIO13) -> brain RX(GPIO16) : "QR:<code>\n"
+//   brain TX(GPIO5) -> CAM RX(GPIO14)  : "SCAN\n" (only used in trigger mode)
+//   Common GND. Both 3.3V -> direct, no level shifter.
+#define CAM_RX_PIN 16
+#define CAM_TX_PIN 5
+HardwareSerial Cam(2);             // Serial2 to the ESP32-CAM
+
 // ── Calibration & motion (shared steps_per_mm, per decision) ────────────────
 float steps_per_mm = 50.0f;        // FULL STEP, 4mm lead. SET after C-calibration!
 float speed_mm_s   = 20.0f;
@@ -86,6 +94,7 @@ const int8_t HOME_DIR[N_AXES]      = { -1,    -1,    +1   };   // X->MIN, Y->MIN
 const uint32_t HOME_TIMEOUT_MS = 30000;
 
 bool homed[N_AXES] = { false, false, false };
+bool autosort = false;             // when true, a QR from the camera auto-runs a sort cycle
 
 // calibration state
 float lastCalMm = 0.0f;
@@ -235,7 +244,13 @@ uint32_t angleToDuty(int deg) {
   float us = 500.0f + (deg / 180.0f) * 1900.0f;          // SG90 ~0.5..2.4 ms
   return (uint32_t)lroundf(us / 20000.0f * ((1UL << SERVO_RES) - 1));
 }
-void servoWrite(int deg) { ledcWrite(SERVO_CH, angleToDuty(deg)); }
+void servoWrite(int deg) {
+#if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
+  ledcWrite(SERVO_PIN, angleToDuty(deg));     // core 3.x: ledcWrite takes the PIN
+#else
+  ledcWrite(SERVO_CH, angleToDuty(deg));      // core 2.x: ledcWrite takes the CHANNEL
+#endif
+}
 void gripOpen()  { servoWrite(grip_open_deg);  Serial.println(F("[grip] OPEN")); }
 void gripClose() { servoWrite(grip_close_deg); Serial.println(F("[grip] CLOSED")); }
 
@@ -371,6 +386,7 @@ void printHelp() {
     "  O open grip   L close grip   E<deg> set servo angle (tune open/close)\n"
     "  T<slot> teach here   M<slot> move there   D dump  (slot: S 11..32; 32=Boxes)\n"
     "  B<code> run one sort cycle: pick Boxes -> place by code (e.g. BMS0012)\n"
+    "  Q1/Q0  auto-sort on QR from the camera (on/off)\n"
     "  V<mm/s> speed   A<mm/s2> accel   S stop   P status   ?  help\n"
     "  P legend: H=homed  m=MIN tripped  M=MAX tripped"));
 }
@@ -472,6 +488,10 @@ void handleLine(String s) {
       stopAll();
       Serial.println(F("[S] stopped"));
       break;
+    case 'Q':
+      autosort = (arg.toInt() == 1);
+      Serial.printf("[Q] auto-sort on incoming QR = %s\n", autosort ? "ON" : "OFF");
+      break;
     case 'P':
       printStatus();
       break;
@@ -498,19 +518,42 @@ void handleLine(String s) {
   }
 }
 
+// Handle one line from the ESP32-CAM ("QR:<code>" or "NOQR"), §8 protocol.
+void handleCamLine(String line) {
+  line.trim();
+  if (line.length() == 0) return;
+  if (line.startsWith("QR:")) {
+    String code = line.substring(3); code.trim();
+    Serial.printf("[CAM] QR:%s\n", code.c_str());
+    if (!autosort) return;                       // link test only, no motion
+    if (!allHomed()) { Serial.println(F("[CAM] not homed -> QR ignored (HA first)")); return; }
+    if (!routeForCode(code.c_str())) { Serial.printf("[CAM] unknown code '%s' -> reject\n", code.c_str()); return; }
+    sortCycle(code.c_str());
+  } else if (line == "NOQR") {
+    Serial.println(F("[CAM] NOQR"));
+  } else {
+    Serial.printf("[CAM] (raw) %s\n", line.c_str());
+  }
+}
+
 void setup() {
   Serial.begin(115200);
+  Cam.begin(115200, SERIAL_8N1, CAM_RX_PIN, CAM_TX_PIN);   // link to ESP32-CAM
   delay(300);
-  Serial.println(F("\n=== BRAIN (stage B: motion + homing + gripper) ==="));
+  Serial.println(F("\n=== BRAIN (stage C: motion + homing + gripper + CAM/QR) ==="));
 
   for (int i = 0; i < N_AXES; i++) {
     pinMode(AXES[i].minPin, INPUT_PULLUP);
     pinMode(AXES[i].maxPin, INPUT_PULLUP);
   }
 
-  // SG90 gripper on LEDC
+  // SG90 gripper on LEDC (API differs between ESP32 core 2.x and 3.x)
+#if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
+  ledcAttach(SERVO_PIN, SERVO_FREQ, SERVO_RES);
+#else
   ledcSetup(SERVO_CH, SERVO_FREQ, SERVO_RES);
   ledcAttachPin(SERVO_PIN, SERVO_CH);
+#endif
   servoWrite(grip_open_deg);          // start opened
 
   engine.init();
@@ -534,6 +577,7 @@ void setup() {
 }
 
 void loop() {
+  // USB console
   static String buf;
   while (Serial.available()) {
     char ch = (char)Serial.read();
@@ -541,6 +585,16 @@ void loop() {
       if (buf.length()) { handleLine(buf); buf = ""; }
     } else {
       buf += ch;
+    }
+  }
+  // ESP32-CAM link (QR:<code> lines)
+  static String camBuf;
+  while (Cam.available()) {
+    char ch = (char)Cam.read();
+    if (ch == '\n' || ch == '\r') {
+      if (camBuf.length()) { handleCamLine(camBuf); camBuf = ""; }
+    } else if (camBuf.length() < 48) {
+      camBuf += ch;
     }
   }
 }

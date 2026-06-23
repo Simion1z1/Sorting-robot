@@ -1,0 +1,132 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 640" font-family="Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#333"/>
+    </marker>
+    <marker id="arrowblue" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#1f6feb"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1180" height="640" fill="#ffffff"/>
+  <text x="590" y="34" text-anchor="middle" font-size="22" font-weight="bold" fill="#111">Robot de sortare QR — schema bloc</text>
+
+  <!-- ===== POWER ===== -->
+  <rect x="30" y="70" width="170" height="58" rx="6" fill="#ffe6cc" stroke="#d79b00" stroke-width="2"/>
+  <text x="115" y="95" text-anchor="middle" font-size="14" font-weight="bold">PSU 12V</text>
+  <text x="115" y="113" text-anchor="middle" font-size="11">6–8A + siguranta 5A</text>
+
+  <rect x="30" y="180" width="170" height="52" rx="6" fill="#fff2cc" stroke="#d6b656" stroke-width="2"/>
+  <text x="115" y="202" text-anchor="middle" font-size="13" font-weight="bold">Buck 12V-&gt;3.3V</text>
+  <text x="115" y="219" text-anchor="middle" font-size="10">logica brain + drivere</text>
+
+  <rect x="30" y="282" width="170" height="52" rx="6" fill="#fff2cc" stroke="#d6b656" stroke-width="2"/>
+  <text x="115" y="304" text-anchor="middle" font-size="13" font-weight="bold">Buck 12V-&gt;5V</text>
+  <text x="115" y="321" text-anchor="middle" font-size="10">+ cap 470µF (anti-brownout)</text>
+
+  <!-- ===== BRAIN ===== -->
+  <rect x="410" y="150" width="220" height="108" rx="8" fill="#dae8fc" stroke="#1f6feb" stroke-width="3"/>
+  <text x="520" y="190" text-anchor="middle" font-size="16" font-weight="bold">ESP32 WROOM-32D</text>
+  <text x="520" y="212" text-anchor="middle" font-size="13">BRAIN</text>
+  <text x="520" y="231" text-anchor="middle" font-size="11">masina de stari + FastAccelStepper</text>
+
+  <!-- ===== DRIVERS ===== -->
+  <rect x="720" y="58"  width="160" height="52" rx="6" fill="#f5f5f5" stroke="#666" stroke-width="2"/>
+  <text x="800" y="80" text-anchor="middle" font-size="13" font-weight="bold">A4988 X</text>
+  <text x="800" y="97" text-anchor="middle" font-size="10">+ heatsink + 100µF</text>
+
+  <rect x="720" y="140" width="160" height="52" rx="6" fill="#f5f5f5" stroke="#666" stroke-width="2"/>
+  <text x="800" y="162" text-anchor="middle" font-size="13" font-weight="bold">A4988 Y</text>
+  <text x="800" y="179" text-anchor="middle" font-size="10">+ heatsink + 100µF</text>
+
+  <rect x="720" y="222" width="160" height="52" rx="6" fill="#f5f5f5" stroke="#666" stroke-width="2"/>
+  <text x="800" y="244" text-anchor="middle" font-size="13" font-weight="bold">A4988 Z</text>
+  <text x="800" y="261" text-anchor="middle" font-size="10">+ heatsink + 100µF</text>
+
+  <!-- ===== MOTORS ===== -->
+  <rect x="940" y="58"  width="150" height="52" rx="6" fill="#d5e8d4" stroke="#2d7d2d" stroke-width="2"/>
+  <text x="1015" y="82" text-anchor="middle" font-size="13" font-weight="bold">NEMA17 X</text>
+  <text x="1015" y="99" text-anchor="middle" font-size="10">actuator surub</text>
+
+  <rect x="940" y="140" width="150" height="52" rx="6" fill="#d5e8d4" stroke="#2d7d2d" stroke-width="2"/>
+  <text x="1015" y="164" text-anchor="middle" font-size="13" font-weight="bold">NEMA17 Y</text>
+  <text x="1015" y="181" text-anchor="middle" font-size="10">actuator surub</text>
+
+  <rect x="940" y="222" width="150" height="52" rx="6" fill="#d5e8d4" stroke="#2d7d2d" stroke-width="2"/>
+  <text x="1015" y="246" text-anchor="middle" font-size="13" font-weight="bold">NEMA17 Z</text>
+  <text x="1015" y="263" text-anchor="middle" font-size="10">actuator surub</text>
+
+  <!-- ===== ENDSTOPS ===== -->
+  <rect x="410" y="330" width="220" height="92" rx="6" fill="#f8cecc" stroke="#b85450" stroke-width="2"/>
+  <text x="520" y="352" text-anchor="middle" font-size="13" font-weight="bold">Endstop-uri SS-5GL (NC)</text>
+  <text x="520" y="372" text-anchor="middle" font-size="11">INPUT_PULLUP, fail-safe</text>
+  <text x="520" y="392" text-anchor="middle" font-size="11">MIN: X21  Y22  Z23</text>
+  <text x="520" y="409" text-anchor="middle" font-size="11">MAX: X4  Y18  Z17</text>
+
+  <!-- ===== Z CARRIAGE ===== -->
+  <rect x="710" y="320" width="380" height="190" rx="10" fill="#e6f2ff" stroke="#1f6feb" stroke-width="2" stroke-dasharray="6 4"/>
+  <text x="900" y="342" text-anchor="middle" font-size="13" font-weight="bold" fill="#1f6feb">Carucior Z (mobil)</text>
+
+  <rect x="730" y="360" width="170" height="58" rx="6" fill="#ffffff" stroke="#333" stroke-width="2"/>
+  <text x="815" y="383" text-anchor="middle" font-size="13" font-weight="bold">ESP32-CAM</text>
+  <text x="815" y="401" text-anchor="middle" font-size="10">OV2640 + decode QR (quirc)</text>
+
+  <rect x="730" y="438" width="170" height="50" rx="6" fill="#ffffff" stroke="#333" stroke-width="2"/>
+  <text x="815" y="461" text-anchor="middle" font-size="13" font-weight="bold">SG90 gripper</text>
+  <text x="815" y="478" text-anchor="middle" font-size="10">paralel</text>
+
+  <rect x="930" y="360" width="140" height="50" rx="6" fill="#ffffff" stroke="#999" stroke-width="2"/>
+  <text x="1000" y="383" text-anchor="middle" font-size="12" font-weight="bold">LED ilum.</text>
+  <text x="1000" y="400" text-anchor="middle" font-size="10">GPIO4 (optional)</text>
+
+  <!-- ===== POWER EDGES ===== -->
+  <line x1="115" y1="128" x2="115" y2="180" stroke="#d79b00" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="128" y="158" font-size="10" fill="#a06000">12V</text>
+  <line x1="115" y1="232" x2="115" y2="282" stroke="#d79b00" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="128" y="262" font-size="10" fill="#a06000">12V</text>
+
+  <line x1="200" y1="200" x2="410" y2="195" stroke="#333" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="280" y="190" font-size="10" fill="#333">3.3V</text>
+
+  <!-- 12V VMOT to drivers -->
+  <line x1="200" y1="90" x2="720" y2="80" stroke="#d79b00" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="430" y="78" font-size="10" fill="#a06000">12V VMOT (x3 drivere)</text>
+
+  <!-- 5V to CAM -->
+  <line x1="200" y1="308" x2="730" y2="385" stroke="#d79b00" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="380" y="368" font-size="10" fill="#a06000">5V</text>
+
+  <!-- ===== BRAIN -> DRIVERS ===== -->
+  <line x1="630" y1="175" x2="720" y2="84"  stroke="#1f6feb" stroke-width="2" marker-end="url(#arrowblue)"/>
+  <text x="636" y="120" font-size="10" fill="#1f6feb">STEP25 / DIR26</text>
+  <line x1="630" y1="195" x2="720" y2="166" stroke="#1f6feb" stroke-width="2" marker-end="url(#arrowblue)"/>
+  <text x="636" y="150" font-size="10" fill="#1f6feb">STEP32 / DIR33</text>
+  <line x1="630" y1="215" x2="720" y2="248" stroke="#1f6feb" stroke-width="2" marker-end="url(#arrowblue)"/>
+  <text x="636" y="238" font-size="10" fill="#1f6feb">STEP27/DIR14 · EN13</text>
+
+  <!-- ===== DRIVERS -> MOTORS ===== -->
+  <line x1="880" y1="84"  x2="940" y2="84"  stroke="#2d7d2d" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="880" y1="166" x2="940" y2="166" stroke="#2d7d2d" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="880" y1="248" x2="940" y2="248" stroke="#2d7d2d" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="888" y="78" font-size="9" fill="#2d7d2d">coil</text>
+
+  <!-- ===== ENDSTOPS -> BRAIN ===== -->
+  <line x1="520" y1="330" x2="520" y2="258" stroke="#b85450" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="528" y="300" font-size="10" fill="#b85450">MIN+MAX 6x</text>
+
+  <!-- ===== BRAIN -> SERVO ===== -->
+  <line x1="630" y1="230" x2="730" y2="455" stroke="#1f6feb" stroke-width="2" marker-end="url(#arrowblue)"/>
+  <text x="640" y="350" font-size="10" fill="#1f6feb">PWM LEDC GPIO19</text>
+
+  <!-- ===== BRAIN <-> CAM ===== -->
+  <line x1="630" y1="205" x2="730" y2="378" stroke="#1f6feb" stroke-width="2" marker-end="url(#arrowblue)"/>
+  <text x="648" y="300" font-size="10" fill="#1f6feb">SCAN trig GPIO5-&gt;14</text>
+  <line x1="730" y1="398" x2="632" y2="225" stroke="#888" stroke-width="2" stroke-dasharray="5 3" marker-end="url(#arrow)"/>
+  <text x="540" y="270" font-size="10" fill="#666">QR: UART 13-&gt;16</text>
+
+  <!-- ===== GND note ===== -->
+  <rect x="30" y="400" width="340" height="40" rx="6" fill="#eeeeee" stroke="#555" stroke-width="1.5"/>
+  <text x="200" y="425" text-anchor="middle" font-size="12" font-weight="bold">GND COMUN — obligatoriu pentru toate blocurile</text>
+
+  <text x="30" y="620" font-size="10" fill="#888">Pini conform CLAUDE.md §4 · domenii VMOT 12V / logica 3.3V separate, unite prin GND comun</text>
+</svg>

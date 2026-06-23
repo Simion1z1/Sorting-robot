@@ -38,8 +38,10 @@
                                    // true  = wait for "SCAN\n" from the brain, then send once
 #define SEND_COOLDOWN_MS  1500     // don't resend the SAME code faster than this (anti-spam)
 
-#define USE_FLASH_LED     false    // GPIO4 white LED as illumination (VERY bright/hot — use briefly)
+#define USE_FLASH_LED     true     // GPIO4 white LED as illumination (DIMMED via PWM below)
 #define FLASH_LED_PIN     4
+#define FLASH_BRIGHTNESS  30       // 0-255. Keep LOW: full brightness glares on the QR + draws current
+#define FLASH_LEDC_CH     7        // LEDC channel for the flash (camera uses ch0/timer0 — keep clear)
 #define STATUS_LED_PIN    33       // onboard red LED (active LOW) — blinks on a read
 // ----------------------------------------------------------------------------
 
@@ -48,7 +50,7 @@
 // larger gives no valid frames. SVGA (800x600) is the library's max (it refuses
 // anything > FRAMESIZE_SVGA) and matches the resolution you verified clear in the
 // webserver. Drop to FRAMESIZE_VGA if you want faster decodes / less memory.
-ESP32QRCodeReader reader(CAMERA_MODEL_AI_THINKER, FRAMESIZE_SVGA);
+ESP32QRCodeReader reader(CAMERA_MODEL_AI_THINKER, FRAMESIZE_SVGA);   // SVGA 800x600 = more pixels on the code (library max); FRAMESIZE_VGA for faster decodes
 HardwareSerial    Brain(1);        // UART1 -> brain
 
 String        lastCode   = "";
@@ -65,7 +67,7 @@ unsigned long lastSendMs = 0;
 bool isValidCode(const String &s) {
   if (s.length() < 3) return false;
   String p = s.substring(0, 2);
-  if (!(p == "MS" || p == "BV" || p == "CJ")) return false;
+  if (!(p == "MS" || p == "BV" || p == "CJ" || p == "EB")) return false;
   for (size_t i = 2; i < s.length(); i++) {
     if (!isDigit(s[i])) return false;
   }
@@ -82,9 +84,11 @@ void sendOrder(const String &code) {
 
 void onQrCodeTask(void *pv) {
   struct QRCodeData qrCodeData;
+  unsigned long nDecoded = 0, nDetectedBad = 0;   // read-rate stats
   while (true) {
     if (reader.receiveQrCode(&qrCodeData, 100)) {
       if (qrCodeData.valid) {
+        nDecoded++;
         String code = String((const char *)qrCodeData.payload);
         code.trim();
 
@@ -108,7 +112,14 @@ void onQrCodeTask(void *pv) {
           digitalWrite(STATUS_LED_PIN, HIGH);   // red OFF
         }
       } else {
+        nDetectedBad++;
         Serial.println("[QR] code detected but not decodable (blurry / low light / too small)");
+      }
+      // Live read-rate: decoded / (decoded + detected-but-bad). Aim for >=90%.
+      unsigned long total = nDecoded + nDetectedBad;
+      if (total > 0) {
+        Serial.printf("[RATE] %lu/%lu decoded = %lu%%\n",
+                      nDecoded, total, (nDecoded * 100) / total);
       }
     }
     vTaskDelay(20 / portTICK_PERIOD_MS);
@@ -130,7 +141,7 @@ void applyCameraTuning() {
 
   // Match the webserver panel (centred sliders = 0):
   s->set_brightness(s, 0);
-  s->set_contrast(s, 1);          // +1 crisps the black/white edges for quirc
+  s->set_contrast(s, 2);          // +2 hardens the black/white edges for quirc (was +1)
   s->set_saturation(s, 0);        // ignored in grayscale, harmless
   s->set_whitebal(s, 1);          // AWB on
   s->set_awb_gain(s, 1);          // AWB gain on
@@ -158,8 +169,15 @@ void setup() {
   pinMode(STATUS_LED_PIN, OUTPUT);
   digitalWrite(STATUS_LED_PIN, HIGH);                          // off
 #if USE_FLASH_LED
-  pinMode(FLASH_LED_PIN, OUTPUT);
-  digitalWrite(FLASH_LED_PIN, HIGH);                           // illumination on
+  // Dimmed steady illumination via PWM (full brightness glares on the QR).
+  #if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
+    ledcAttach(FLASH_LED_PIN, 5000, 8);
+    ledcWrite(FLASH_LED_PIN, FLASH_BRIGHTNESS);
+  #else
+    ledcSetup(FLASH_LEDC_CH, 5000, 8);
+    ledcAttachPin(FLASH_LED_PIN, FLASH_LEDC_CH);
+    ledcWrite(FLASH_LEDC_CH, FLASH_BRIGHTNESS);
+  #endif
 #endif
 
   Serial.println();
