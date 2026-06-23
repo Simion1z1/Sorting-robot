@@ -28,6 +28,8 @@
  */
 
 #include "FastAccelStepper.h"
+#include <WiFi.h>
+#include <esp_now.h>
 
 // ── Endstop convention ──────────────────────────────────────────────────────
 // Current hardware: NO (Normally Open) switches, COM->GND, INPUT_PULLUP.
@@ -60,7 +62,7 @@ struct Pos { float x, y, z; };
 //   CAM TX(GPIO13) -> brain RX(GPIO16) : "QR:<code>\n"
 //   brain TX(GPIO5) -> CAM RX(GPIO14)  : "SCAN\n" (only used in trigger mode)
 //   Common GND. Both 3.3V -> direct, no level shifter.
-#define CAM_RX_PIN 16
+#define CAM_RX_PIN 16      // (UART link unused now — camera comes in over ESP-NOW)
 #define CAM_TX_PIN 5
 HardwareSerial Cam(2);             // Serial2 to the ESP32-CAM
 
@@ -95,6 +97,10 @@ const uint32_t HOME_TIMEOUT_MS = 30000;
 
 bool homed[N_AXES] = { false, false, false };
 bool autosort = false;             // when true, a QR from the camera auto-runs a sort cycle
+
+// ESP-NOW receive buffer (filled in the radio callback, processed in loop()).
+volatile bool camMsgReady = false;
+char camMsgBuf[64];
 
 // calibration state
 float lastCalMm = 0.0f;
@@ -536,11 +542,34 @@ void handleCamLine(String line) {
   }
 }
 
+// ESP-NOW receive callback — keep it SHORT (runs in the WiFi task): just copy the
+// message out; the actual work happens in loop() via handleCamLine.
+#if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
+void onEspNowRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
+#else
+void onEspNowRecv(const uint8_t *mac, const uint8_t *data, int len) {
+#endif
+  if (camMsgReady) return;                       // previous not processed yet -> drop
+  int n = (len < 63) ? len : 63;
+  memcpy(camMsgBuf, data, n);
+  camMsgBuf[n] = '\0';
+  camMsgReady = true;
+}
+
 void setup() {
   Serial.begin(115200);
-  Cam.begin(115200, SERIAL_8N1, CAM_RX_PIN, CAM_TX_PIN);   // link to ESP32-CAM
+  Cam.begin(9600, SERIAL_8N1, CAM_RX_PIN, CAM_TX_PIN);   // legacy UART link (unused; CAM is on ESP-NOW)
   delay(300);
-  Serial.println(F("\n=== BRAIN (stage C: motion + homing + gripper + CAM/QR) ==="));
+  Serial.println(F("\n=== BRAIN (stage C: motion + homing + gripper + CAM/QR over ESP-NOW) ==="));
+
+  // ESP-NOW: receive QR strings wirelessly from the ESP32-CAM (no wire needed).
+  WiFi.mode(WIFI_STA);
+  if (esp_now_init() == ESP_OK) {
+    esp_now_register_recv_cb(onEspNowRecv);
+    Serial.printf("ESP-NOW ready (brain). MAC = %s\n", WiFi.macAddress().c_str());
+  } else {
+    Serial.println(F("ESP-NOW init FAILED"));
+  }
 
   for (int i = 0; i < N_AXES; i++) {
     pinMode(AXES[i].minPin, INPUT_PULLUP);
@@ -587,14 +616,9 @@ void loop() {
       buf += ch;
     }
   }
-  // ESP32-CAM link (QR:<code> lines)
-  static String camBuf;
-  while (Cam.available()) {
-    char ch = (char)Cam.read();
-    if (ch == '\n' || ch == '\r') {
-      if (camBuf.length()) { handleCamLine(camBuf); camBuf = ""; }
-    } else if (camBuf.length() < 48) {
-      camBuf += ch;
-    }
+  // ESP-NOW: a QR string arrived from the camera (copied in the callback)
+  if (camMsgReady) {
+    handleCamLine(String(camMsgBuf));
+    camMsgReady = false;
   }
 }

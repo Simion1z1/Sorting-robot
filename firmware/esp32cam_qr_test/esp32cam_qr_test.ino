@@ -28,9 +28,11 @@
 ============================================================================= */
 
 #include "ESP32QRCodeReader.h"
+#include <WiFi.h>
+#include <esp_now.h>
 
 // ----------------------------- CONFIG ---------------------------------------
-#define BRAIN_BAUD        115200   // UART to the brain (and 8N1)
+#define BRAIN_BAUD        9600     // UART to the brain (8N1). Low baud = robust over marginal wiring.
 #define BRAIN_TX_PIN      13       // CAM -> brain  (QR data)   [do NOT use 12]
 #define BRAIN_RX_PIN      14       // brain -> CAM  (optional SCAN trigger)
 
@@ -74,12 +76,25 @@ bool isValidCode(const String &s) {
   return true;
 }
 
+// ESP-NOW broadcast: send the order wirelessly to the brain (no wire needed).
+uint8_t broadcastAddr[6] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
+
+void initEspNow() {
+  WiFi.mode(WIFI_STA);
+  if (esp_now_init() != ESP_OK) { Serial.println("ESP-NOW init FAILED"); return; }
+  esp_now_peer_info_t peer = {};
+  memcpy(peer.peer_addr, broadcastAddr, 6);
+  peer.channel = 0;        // use the current WiFi channel (both boards default to ch1)
+  peer.encrypt = false;
+  if (esp_now_add_peer(&peer) != ESP_OK) { Serial.println("ESP-NOW add_peer FAILED"); return; }
+  Serial.printf("ESP-NOW ready (CAM). MAC = %s\n", WiFi.macAddress().c_str());
+}
+
 void sendOrder(const String &code) {
-  Brain.print("QR:");
-  Brain.print(code);
-  Brain.print('\n');                       // newline-terminated, per §8
-  Serial.print("[SENT -> brain]  QR:");
-  Serial.println(code);
+  String msg = "QR:" + code;                                   // same §8 format, over ESP-NOW
+  esp_now_send(broadcastAddr, (const uint8_t *)msg.c_str(), msg.length());
+  Serial.print("[SENT -> brain]  ");
+  Serial.println(msg);
 }
 
 void onQrCodeTask(void *pv) {
@@ -189,6 +204,8 @@ void setup() {
   applyCameraTuning();                                         // <-- SVGA + webserver settings
   Serial.println("Camera initialised. Hold a printed QR ~10-20 cm away.");
   reader.beginOnCore(1);
+
+  initEspNow();                                                // wireless link to the brain
 
   xTaskCreate(onQrCodeTask, "onQrCode", 4096, NULL, 4, NULL);
 }
