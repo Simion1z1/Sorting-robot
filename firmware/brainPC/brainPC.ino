@@ -284,8 +284,8 @@ Pos SCAN_POS = { -0.06, 164.94, -19.94 };   // where the camera reads the QR
 // Exact QR code -> destination cell (fixed mapping, CLAUDE.md §6.2 strategy A).
 struct CodeCell { const char *code; uint8_t row, col; };
 const CodeCell CODE_MAP[] = {
-  { "MS0012", 0, 0 },   // Row1 Col1
-  { "MS0011", 0, 1 },   // Row1 Col2
+  { "MS0011", 0, 0 },   // Row1 Col1 = M11
+  { "MS0012", 0, 1 },   // Row1 Col2 = M12
   { "CJ0011", 1, 0 },   // Row2 Col1
   { "CJ0012", 1, 1 },   // Row2 Col2
   { "EB0011", 2, 0 },   // Row3 Col1

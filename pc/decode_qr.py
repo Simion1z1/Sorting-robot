@@ -43,9 +43,14 @@ def decode_qr(frame):
                     return obj.data.decode("utf-8").strip()
                 except Exception:
                     pass
-    data, _pts, _ = _detector.detectAndDecode(gray)
-    if data:
-        return data.strip()
+    # OpenCV fallback. detectAndDecode can throw cv2.error on degenerate frames
+    # (contourArea==0) instead of returning empty — swallow that.
+    try:
+        data, _pts, _ = _detector.detectAndDecode(gray)
+        if data:
+            return data.strip()
+    except cv2.error:
+        pass
     return None
 
 

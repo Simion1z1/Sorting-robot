@@ -23,8 +23,12 @@
      PSRAM:          Enabled
      Partition:      "Huge APP (3MB No OTA/1MB SPIFFS)"
      Upload Speed:   115200 (or 921600)
-   Program it on the HW-381 / ESP32-CAM-MB carrier (USB). UART0 (GPIO1/3) is the
-   USB debug port; the brain link below uses a SEPARATE UART on GPIO13/14.
+   Program it on the HW-381 / ESP32-CAM-MB carrier (USB).
+
+   POWER: powered over USB via the ESP32-CAM-MB (HW-381) carrier — from a laptop USB
+   or a power bank (5V). Clean 5V, no buck. The brain link is WIRELESS (ESP-NOW), so the
+   camera needs only power: no data wire and no common GND with the brain. (Use a power
+   bank without auto-off, or it may switch off at low idle current.)
 ============================================================================= */
 
 #include "ESP32QRCodeReader.h"

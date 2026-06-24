@@ -14,6 +14,11 @@
    BOARD SETTINGS (Arduino IDE > Tools):
      Board: "AI Thinker ESP32-CAM"   PSRAM: Enabled
      Partition: "Huge APP (3MB No OTA/1MB SPIFFS)"
+
+   POWER: powered over USB via the ESP32-CAM-MB (HW-381) carrier — from a laptop USB
+   or a power bank (5V). Clean 5V, no buck. The link is WiFi, so the camera needs only
+   power: no data wire and no common GND with the brain. (Use a power bank without
+   auto-off, or it may switch off at low idle current.)
 ============================================================================= */
 
 #include "esp_camera.h"
